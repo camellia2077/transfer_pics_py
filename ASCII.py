@@ -17,13 +17,14 @@ SUPPORTED_IMAGE_EXTENSIONS = ('.png', '.jpg', '.jpeg', '.bmp', '.gif', '.tiff', 
 
 # --- Color Theme Configuration ---
 COLOR_THEMES = {
-    "dark":         {"background": "black", "foreground": "white"},
-    "green_term":   {"background": "black", "foreground": "lime"},
-    "light":        {"background": "white", "foreground": "black"},
-    "amber_term":   {"background": "#1c1c1c", "foreground": "#FFBF00"},
-    "original":     {"background": "black", "foreground": None}, # Needs color map
-    "original_light_bg": {"background": "white", "foreground": None}, # Needs color map
-    # Add any other themes you want here
+    "dark":           {"background": "black", "foreground": "white"},
+    "green_term":     {"background": "black", "foreground": "lime"},
+    # --- 修改后的 ---
+    "light":          {"background": "#f0f0f0", "foreground": "black"}, # 例如改为浅灰色
+    "amber_term":     {"background": "#1c1c1c", "foreground": "#FFBF00"},
+    "original":       {"background": "black", "foreground": None}, # Needs color map
+    # --- 修改后的 ---
+    "original_light_bg": {"background": "#f0f0f0", "foreground": None}, # 例如改为浅灰色
 }
 
 # --- Selection of Themes to Generate ---
@@ -277,13 +278,11 @@ def process_image_to_ascii_themes(image_path, font, themes_config, output_dir):
     """
     Processes a single image file: loads it, generates ASCII art for multiple themes,
     and saves them as PNGs in the specified output directory.
-
     Args:
         image_path (str): Path to the input image file.
         font (ImageFont): The loaded PIL font object.
         themes_config (dict): The COLOR_THEMES dictionary.
         output_dir (str): The directory where output PNGs should be saved.
-
     Returns:
         dict: A dictionary containing counts {'success': int, 'failed': int}.
     """
@@ -399,12 +398,10 @@ def process_directory(dir_path, font, themes_config):
     """
     Scans a directory, processes all supported images using
     process_image_to_ascii_themes, and aggregates the results.
-
     Args:
         dir_path (str): Path to the input directory.
         font (ImageFont): The loaded PIL font object.
         themes_config (dict): The COLOR_THEMES dictionary.
-
     Returns:
         dict: Aggregated results {'processed_files': int, 'total_success': int,
                'total_failed': int, 'output_location': str or None}.
