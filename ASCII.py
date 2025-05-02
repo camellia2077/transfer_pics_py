@@ -1,87 +1,50 @@
+# -*- coding: utf-8 -*-
 import os
 import sys
 from PIL import Image, ImageDraw, ImageFont
 import math
-import traceback # Import traceback for better error reporting
-import time # Import the time module
+import traceback 
+import time 
+import numpy as np
 
-# --- Configuration ---
+# --- 配置 ---
 ASCII_CHARS = "$@B%8&WM#*oahkbdpqwmZO0QLCJUYXzcvunxrjft/\\|()1{}[]?-_+~<>i!lI;:,\"^`'. "
-OUTPUT_WIDTH_CHARS = 256 # Width of the ASCII representation in characters
-FONT_NAMES = ['DejaVuSansMono', 'Consolas', 'Courier New', 'Liberation Mono', 'monospace']
-FONT_SIZE = 10
-RESIZE_OUTPUT = True # Set to True to resize output PNG to original aspect ratio
+OUTPUT_WIDTH_CHARS = 2048 # ASCII 表示的宽度（以字符为单位）
 
-# Define supported image file extensions (case-insensitive)
+FONT_FILENAME = "Consolas.ttf" #从程序同目录加载指定字体文件名
+FONT_SIZE = 15
+RESIZE_OUTPUT = True # 设置为 True 以将输出 PNG 调整为原始宽高比
+
+# 定义支持的图片文件扩展名（不区分大小写）
 SUPPORTED_IMAGE_EXTENSIONS = ('.png', '.jpg', '.jpeg', '.bmp', '.gif', '.tiff', '.webp')
 
-# --- Color Theme Configuration ---
+# --- 颜色主题配置 ---
 COLOR_THEMES = {
-    "dark":           {"background": "black", "foreground": "white"},
-    "green_term":     {"background": "black", "foreground": "lime"},
+    "dark":           {"background": "black", "foreground": "white"},#黑底白字
+    "green_term":     {"background": "black", "foreground": "lime"},#黑底绿字
     # --- 修改后的 ---
-    "light":          {"background": "#f0f0f0", "foreground": "black"}, # 例如改为浅灰色
-    "amber_term":     {"background": "#1c1c1c", "foreground": "#FFBF00"},
-    "original":       {"background": "black", "foreground": None}, # Needs color map
+    "light":          {"background": "#f0f0f0", "foreground": "black"}, #灰底黑字
+    "amber_term":     {"background": "#1c1c1c", "foreground": "#FFBF00"},#黑底黄字
+    "original":       {"background": "black", "foreground": None}, #黑底彩色
     # --- 修改后的 ---
-    "original_light_bg": {"background": "#f0f0f0", "foreground": None}, # 例如改为浅灰色
+    "original_light_bg": {"background": "#f0f0f0", "foreground": None}, # 灰底彩色
 }
 
-# --- Selection of Themes to Generate ---
+# --- 选择要生成的主题 ---
 THEMES_TO_GENERATE = [
-    "dark",
-    "green_term",
-    "original",
+    #"dark",
+    #"green_term",
+    #"original",
     "original_light_bg",
-    "light",
+    #"light",
+    #"amber_term",
 ]
-# ------------------------------------
-
-# --- Helper Functions ---
-
-def load_font(font_names, size):
-    """Tries to load a font from the provided list."""
-    # (Renamed from find_font, logic remains the same)
-    for name in font_names:
-        try:
-            # Try loading with specific encoding first (more robust)
-            return ImageFont.truetype(name, size, encoding='unic')
-        except IOError:
-            # Font file not found or cannot be opened
-            continue
-        except UnicodeDecodeError:
-             # Some systems/fonts might throw this, try without encoding
-             try:
-                 return ImageFont.truetype(name, size)
-             except IOError:
-                 continue # Still not found
-             except Exception as e_inner:
-                  print(f"Warning: Error loading font '{name}' without encoding: {e_inner}. Trying next.")
-                  continue
-        except Exception as e:
-            print(f"Warning: Error loading font '{name}' with specific encoding: {e}. Trying next.")
-            continue
-
-    print(f"Warning: Could not find any of the preferred fonts: {font_names}. Trying default PIL font.")
-    try:
-        # Try loading default with size if possible (newer Pillow versions)
-        try:
-            return ImageFont.load_default(size=size)
-        except TypeError:
-            # Fallback for older Pillow or if size isn't supported for default
-            print("Note: Using basic ImageFont.load_default() without size argument.")
-            return ImageFont.load_default()
-    except IOError as e_default_io:
-        raise IOError(f"Could not load any suitable font, including the default PIL font. Error: {e_default_io}")
-    except Exception as e_default:
-        raise IOError(f"An unexpected error occurred loading the default font: {e_default}")
 
 
 def image_to_ascii(color_image, width_chars, active_theme_name, needs_color_map=False):
     """
-    Converts a PIL color image to a list of ASCII strings based on brightness.
-    Optionally returns a resized color map image if needs_color_map is True.
-    (Internal logic remains the same)
+    使用 NumPy 将 PIL 彩色图像根据亮度转换为 ASCII 字符串列表。
+    如果 needs_color_map 为 True，则可选地返回调整大小后的颜色映射图像。
     """
     try:
         image_rgb = color_image.convert('RGB')
@@ -90,147 +53,152 @@ def image_to_ascii(color_image, width_chars, active_theme_name, needs_color_map=
         original_width, original_height = image_rgb.size
         aspect_ratio = original_height / float(original_width) if original_width > 0 else 1
 
-        # Adjust for character aspect ratio (characters are often taller than wide)
-        char_aspect_ratio_correction = 0.5 # Adjust this value based on font appearance
+        # 调整字符宽高比
+        char_aspect_ratio_correction = 0.5
         new_height_chars = int(width_chars * aspect_ratio * char_aspect_ratio_correction)
-        new_height_chars = max(1, new_height_chars) # Ensure at least one line
+        new_height_chars = max(1, new_height_chars) # 确保至少有一行
 
-        # Resize grayscale image for brightness mapping
+        # 调整灰度图像的大小以进行亮度映射
         resized_gray = image_gray.resize((width_chars, new_height_chars), Image.Resampling.NEAREST)
-        gray_pixels = list(resized_gray.getdata())
+
+        # 将调整大小后的灰度图像转换为 NumPy 数组
+        gray_pixels_np = np.array(resized_gray, dtype=np.uint8) # 确保为 uint8 类型
 
         color_map_image = None
         if needs_color_map:
-            # Resize original color image for pixel-by-pixel color sampling if needed
+            # 调整原始彩色图像的大小以进行逐像素颜色采样
             color_map_image = image_rgb.resize((width_chars, new_height_chars), Image.Resampling.NEAREST)
 
-        ascii_str_list = []
         num_chars = len(ASCII_CHARS)
+        # 创建一个 NumPy ASCII 字符数组以实现快速映射
+        ascii_map = np.array(list(ASCII_CHARS))
 
-        # Determine if background is light or dark to invert brightness mapping if needed
+        # 判断背景是浅色还是深色
         theme_bg = COLOR_THEMES.get(active_theme_name, {}).get("background", "black").lower()
-        is_light_bg = theme_bg in ["white", "#ffffff", "lightgrey", "#d3d3d3", "#fff", "ivory"] # Add more light colors if needed
+        # 确保检查包含可能修改过的浅色背景色
+        is_light_bg = theme_bg in ["white", "#ffffff", "lightgrey", "#d3d3d3", "#fff", "ivory", "#f0f0f0"]
 
-        pixel_index = 0
-        for _ in range(new_height_chars):
-            line = ""
-            for _ in range(width_chars):
-                if pixel_index < len(gray_pixels):
-                    pixel_value = gray_pixels[pixel_index]
-                    # Map brightness to character index
-                    # For light backgrounds, brighter pixels -> denser chars (start of ASCII_CHARS)
-                    # For dark backgrounds, brighter pixels -> lighter chars (end of ASCII_CHARS), so invert mapping
-                    if is_light_bg:
-                        # Higher pixel value (brighter) should map to lower index (denser char)
-                        char_index = min(int((255 - pixel_value) / 256 * num_chars), num_chars - 1)
-                    else:
-                        # Higher pixel value (brighter) should map to higher index (lighter char)
-                        char_index = min(int(pixel_value / 256 * num_chars), num_chars - 1)
-                    line += ASCII_CHARS[char_index]
-                    pixel_index += 1
-                else:
-                     line += " " # Handle potential rounding errors if pixel_index exceeds length
-            # Ensure line has the correct width (safety measure)
-            if len(line) != width_chars:
-                 line = (line + " " * width_chars)[:width_chars]
-            ascii_str_list.append(line)
+        # --- 字符索引的向量化计算 ---
+        if is_light_bg:
+            # 浅色背景：较亮的像素 -> 较密的字符（较低索引）
+            char_indices = np.floor((255.0 - gray_pixels_np) * (num_chars / 256.0)).astype(int)
+        else:
+            # 深色背景：较亮的像素 -> 较浅的字符（较高索引）
+            char_indices = np.floor(gray_pixels_np * (num_chars / 256.0)).astype(int)
+
+        # 裁剪索引以确保它们在有效范围 [0, num_chars - 1] 内
+        char_indices = np.clip(char_indices, 0, num_chars - 1)
+        # --- 向量化计算结束 ---
+
+        # 使用索引从字符映射数组中获取字符
+        ascii_grid = ascii_map[char_indices]
+        # 将二维字符数组转换为字符串列表（每行一个字符串）
+        ascii_str_list = ["".join(row) for row in ascii_grid]
 
         return ascii_str_list, color_map_image
 
     except Exception as e:
-        print(f"Error during ASCII conversion for theme '{active_theme_name}': {e}")
+        print(f"在主题 '{active_theme_name}' 的 ASCII 转换（NumPy）过程中出错: {e}")
         traceback.print_exc()
         return None, None
 
 
+
 def create_ascii_png(ascii_lines,
-                     color_map_image,
-                     theme_name,
-                     output_path,
-                     font,
-                     background_color,
-                     foreground_color, # Used for non-original themes
-                     original_image_size=None):
+                      color_map_image,
+                      theme_name,
+                      output_path,
+                      font,
+                      background_color,
+                      foreground_color, # 用于非原始颜色主题
+                      original_image_size=None):
     """
-    Creates a PNG image from ASCII lines. Uses colors from color_map_image
-    if theme_name indicates an original color theme, otherwise uses foreground_color.
-    Optionally resizes the output PNG.
-    (Internal logic remains the same)
+    根据 ASCII 字符串行创建 PNG 图像。如果 theme_name 表示原始颜色主题，
+    则使用 color_map_image 中的颜色，否则使用 foreground_color。
+    可选地调整输出 PNG 的大小。
     """
     if not ascii_lines or not ascii_lines[0]:
-        print("Error: No ASCII data or empty lines to create PNG.")
-        return False # Indicate failure
+        print("错误：没有 ASCII 数据或空行来创建 PNG。")
+        return False # 表示失败
 
     is_original_color_theme = theme_name in ["original", "original_light_bg"]
 
     try:
-        # --- Determine text rendering dimensions accurately ---
+        # --- 精确确定文本渲染尺寸 ---
         dummy_img = Image.new('RGB', (1, 1))
         draw = ImageDraw.Draw(dummy_img)
-
-        # Use textbbox for more accurate sizing if available (Pillow >= 8.0.0)
-        # Include descenders/ascenders in line height calculation
         try:
-            # Use characters with ascenders and descenders for height
+            # 使用包含升部和降部的字符来获取行高
             bbox = draw.textbbox((0, 0), '|M_g(`', font=font)
             line_height = bbox[3] - bbox[1]
-            # Get width using the first line of actual text
+            # 使用第一行实际文本获取宽度
             bbox_width = draw.textbbox((0, 0), ascii_lines[0], font=font)
             text_width = bbox_width[2] - bbox_width[0]
         except AttributeError:
-            # Fallback for older Pillow versions using textsize/textlength
-            print("Warning: Using older Pillow text measurement methods (textsize/textlength). Sizing might be less accurate.")
+            # 对旧版 Pillow 使用 textsize/textlength 的后备方案
+            print("警告：正在使用较旧的 Pillow 文本测量方法（textsize/textlength）。尺寸可能不太准确。")
             try:
-                 (_, h) = draw.textsize('|M_g(`', font=font)
-                 line_height = h
-                 (w, _) = draw.textsize(ascii_lines[0], font=font)
-                 text_width = w
-            except AttributeError: # Even older fallback if textsize fails for complex strings
-                 (_, h) = draw.textsize('M', font=font)
-                 line_height = int(h * 1.2) # Approximate
-                 (w, _) = draw.textsize('M'*len(ascii_lines[0]), font=font)
-                 text_width = w # Rough estimate
+                (_, h) = draw.textsize('|M_g(`', font=font)
+                line_height = h
+                (w, _) = draw.textsize(ascii_lines[0], font=font)
+                text_width = w
+            except AttributeError: # 如果 textsize 对复杂字符串失败，使用更旧的后备方案
+                (_, h) = draw.textsize('M', font=font)
+                line_height = int(h * 1.2) # 近似值
+                (w, _) = draw.textsize('M'*len(ascii_lines[0]), font=font)
+                text_width = w # 粗略估计
 
-        line_spacing = line_height + 2 # Add small spacing between lines
+        line_spacing = line_height + 2 # 在行之间添加少量间距
         if line_spacing <=0 : line_spacing = font.size + 2
-        if text_width <= 0: text_width = font.size * len(ascii_lines[0]) # Estimate if calculation failed
+        if text_width <= 0: text_width = font.size * len(ascii_lines[0]) # 如果计算失败则估算
 
         img_width = max(1, text_width)
         img_height = max(1, line_spacing * len(ascii_lines))
 
-        # --- Create the image and draw text ---
+        # --- 创建图像并绘制文本 ---
         output_image = Image.new('RGB', (img_width, img_height), color=background_color)
         draw = ImageDraw.Draw(output_image)
 
         y_text = 0
         if is_original_color_theme and color_map_image:
-            # --- Draw character by character using color map ---
-            # Estimate average character width for positioning
-            # More accurate: measure each char, but slower. Use average for speed.
+            # --- 使用颜色映射逐字符绘制 ---
+            # 使用 .load() 以可能更快地在循环中访问像素
+            color_pixels = color_map_image.load()
+            # 估算平均字符宽度以定位，更精确的方法是测量每个字符，但较慢。
             avg_char_width = text_width / len(ascii_lines[0]) if ascii_lines[0] else font.size
             for y, line in enumerate(ascii_lines):
                 x_pos = 0
                 for x, char in enumerate(line):
                     try:
-                        # Get color from the resized color map image
-                        char_color = color_map_image.getpixel((x, y))
-                        # Draw the single character
+                        # 使用已加载的像素对象
+                        char_color = color_pixels[x, y]
+
+                        # 可选：为浅色背景加深颜色，当为灰色背景时
+                        if theme_name == "original_light_bg":
+                            darken_factor = 0.75
+                            r, g, b = char_color
+                            new_r = max(0, min(255, int(r * darken_factor)))
+                            new_g = max(0, min(255, int(g * darken_factor)))
+                            new_b = max(0, min(255, int(b * darken_factor)))
+                            char_color = (new_r, new_g, new_b)
+
+                        # 绘制单个字符
                         draw.text((math.floor(x_pos), y_text), char, font=font, fill=char_color)
-                        # Advance x position - using measured width of *this* char would be best but slow
-                        # Using average width is a good compromise
+                        # 前进 x 位置 - 使用平均宽度是速度和精度的折中
                         x_pos += avg_char_width
                     except IndexError:
-                        print(f"Warning: Coordinate ({x},{y}) out of bounds for color_map_image. Using fallback color.")
-                        draw.text((math.floor(x_pos), y_text), char, font=font, fill="red") # Fallback color
+                        print(f"警告：坐标 ({x},{y}) 超出 color_map_image 的边界。使用后备颜色。")
+                        draw.text((math.floor(x_pos), y_text), char, font=font, fill="red") # 后备颜色
                         x_pos += avg_char_width
                     except Exception as char_err:
-                        print(f"Warning: Error drawing char '{char}' at text pos ({x_pos:.0f},{y_text}): {char_err}")
-                        x_pos += avg_char_width # Still advance position
+                        print(f"警告：在文本位置 ({x_pos:.0f},{y_text}) 绘制字符 '{char}' 时出错: {char_err}")
+                        x_pos += avg_char_width # 仍然前进位置
                 y_text += line_spacing
         else:
-            # --- Draw line by line using fixed foreground color ---
+            # --- 使用固定的前景色逐行绘制 ---
+            # 非彩色主题逐行绘制（已经很高效）
             if foreground_color is None:
-                print(f"Error: Foreground color is missing for non-original theme '{theme_name}'. Using white.")
+                print(f"错误：非原始颜色主题 '{theme_name}' 缺少前景色。使用白色。")
                 effective_fg_color = "white"
             else:
                 effective_fg_color = foreground_color
@@ -238,107 +206,95 @@ def create_ascii_png(ascii_lines,
                 draw.text((0, y_text), line, font=font, fill=effective_fg_color)
                 y_text += line_spacing
 
-        # --- Optional Resizing ---
+        # --- 可选的尺寸调整 ---
         if RESIZE_OUTPUT and original_image_size:
             original_width, original_height = original_image_size
             if original_width > 0 and original_height > 0:
-                # Calculate target height maintaining aspect ratio based on text width
+                # 根据文本宽度计算目标高度以保持宽高比
                 original_aspect = original_height / float(original_width)
                 target_height = int(img_width * original_aspect)
-                target_height = max(1, target_height) # Ensure height is at least 1
+                target_height = max(1, target_height) # 确保高度至少为 1
                 try:
-                    # Use LANCZOS for high-quality resizing if available
+                    # 如果可用，使用 LANCZOS 进行高质量缩放
                     output_image = output_image.resize((img_width, target_height), Image.Resampling.LANCZOS)
                 except AttributeError:
-                    # Fallback for older Pillow versions
+                    # 对旧版 Pillow 的后备方案
                     try:
                         output_image = output_image.resize((img_width, target_height), Image.LANCZOS)
                     except AttributeError:
-                        print("Warning: Using older Pillow resize filter (BILINEAR).")
+                        print("警告：正在使用较旧的 Pillow 缩放滤镜 (BILINEAR)。")
                         output_image = output_image.resize((img_width, target_height), Image.BILINEAR)
             else:
-                print("Warning: Cannot resize, original image dimensions are invalid.")
+                print("警告：无法调整大小，原始图像尺寸无效。")
         elif RESIZE_OUTPUT:
-             print(f"Warning: Resizing requested but original image size not provided.")
+             print(f"警告：请求调整大小但未提供原始图像尺寸。")
 
-        # --- Save the final image ---
+        # --- 保存最终图像 ---
         output_image.save(output_path)
-        # final_w, final_h = output_image.size # Get final size after potential resize
-        # print(f"      ASCII PNG image saved successfully to: {os.path.basename(output_path)} ({final_w}x{final_h})")
-        return True # Indicate success
+        return True # 表示成功
 
     except Exception as e:
-        print(f"Error creating or saving PNG for theme '{theme_name}' at path '{output_path}': {e}")
+        print(f"在路径 '{output_path}' 为主题 '{theme_name}' 创建或保存 PNG 时出错: {e}")
         traceback.print_exc()
-        return False # Indicate failure
+        return False # 表示失败
 
-# --- Core Processing Functions ---
-
+# --- 核心处理函数 ---
 def process_image_to_ascii_themes(image_path, font, themes_config, output_dir):
     """
-    Processes a single image file: loads it, generates ASCII art for multiple themes,
-    and saves them as PNGs in the specified output directory.
-    Args:
-        image_path (str): Path to the input image file.
-        font (ImageFont): The loaded PIL font object.
-        themes_config (dict): The COLOR_THEMES dictionary.
-        output_dir (str): The directory where output PNGs should be saved.
-    Returns:
-        dict: A dictionary containing counts {'success': int, 'failed': int}.
+    处理单个图像文件：加载它，为多个主题生成 ASCII 艺术，
+    并将它们作为 PNG 保存在指定的输出目录中。
     """
-    print(f"\nProcessing image: {image_path}")
+    print(f"\n正在处理图像: {image_path}")
     results = {'success': 0, 'failed': 0}
-    img_load_start = time.perf_counter()
     original_img = None
     original_dimensions = (0, 0)
 
-    # --- Load Image ---
+    # --- 加载图像 ---
     try:
         with Image.open(image_path) as img_opened:
-            original_img = img_opened.convert('RGB') # Ensure RGB
+            original_img = img_opened.convert('RGB') # 确保是 RGB 格式
             original_dimensions = original_img.size
         if not original_img:
-             raise ValueError("Image could not be loaded or converted.")
-        img_load_end = time.perf_counter()
-        print(f"  Image loaded ({original_dimensions[0]}x{original_dimensions[1]}) in {img_load_end - img_load_start:.4f}s")
+             raise ValueError("无法加载或转换图像。")
+        print(f"  图像已加载 ({original_dimensions[0]}x{original_dimensions[1]})") # 保留简单的加载完成消息
     except FileNotFoundError:
-        print(f"  Error: Image file not found at '{image_path}'. Skipping.")
-        results['failed'] = len(THEMES_TO_GENERATE) # Count all potential themes as failed for this image
+        print(f"  错误：在 '{image_path}' 未找到图像文件。跳过。")
+        results['failed'] = len(THEMES_TO_GENERATE) # 将此图像所有潜在主题计为失败
         return results
     except Exception as e:
-        print(f"  Error opening or converting image file '{os.path.basename(image_path)}': {e}")
+        print(f"  打开或转换图像文件 '{os.path.basename(image_path)}' 时出错: {e}")
         traceback.print_exc()
-        results['failed'] = len(THEMES_TO_GENERATE) # Count all potential themes as failed
+        results['failed'] = len(THEMES_TO_GENERATE) # 将所有潜在主题计为失败
         return results
 
-    # --- Ensure Output Directory Exists ---
+    # --- 确保输出目录存在 ---
     try:
         os.makedirs(output_dir, exist_ok=True)
     except OSError as e:
-        print(f"  Error: Could not create output directory '{output_dir}': {e}. Skipping image.")
+        print(f"  错误：无法创建输出目录 '{output_dir}': {e}。跳过图像。")
         results['failed'] = len(THEMES_TO_GENERATE)
         return results
 
-    # --- Process Each Theme ---
+    # --- 处理每个主题 ---
     base_name = os.path.basename(image_path)
     file_name_no_ext, _ = os.path.splitext(base_name)
 
     for theme_name in THEMES_TO_GENERATE:
-        theme_start_time = time.perf_counter()
-        print(f"  - Processing theme: '{theme_name}'...")
+        theme_start_time = time.perf_counter() # 保留主题计时
+        print(f"  - 正在处理主题: '{theme_name}'...")
 
         theme_details = themes_config.get(theme_name)
         if not theme_details:
-            print(f"    Warning: Theme '{theme_name}' not found in config. Skipping.")
+            print(f"    警告：在配置中未找到主题 '{theme_name}'。跳过。")
             results['failed'] += 1
             continue
 
         bg_color = theme_details["background"]
-        fg_color = theme_details.get("foreground") # Can be None
+        fg_color = theme_details.get("foreground") # 可以是 None
         is_original = theme_name in ["original", "original_light_bg"]
 
-        # 1. Convert to ASCII
-        ascii_conv_start = time.perf_counter()
+        # 1. 转换为 ASCII（现在使用 NumPy 优化版本）
+        ascii_conv_start = time.perf_counter() # 保留转换计时
         ascii_data, color_map = image_to_ascii(
             color_image=original_img,
             width_chars=OUTPUT_WIDTH_CHARS,
@@ -348,32 +304,33 @@ def process_image_to_ascii_themes(image_path, font, themes_config, output_dir):
         ascii_conv_end = time.perf_counter()
 
         if not ascii_data:
-            print(f"    Error: Failed to generate ASCII data for theme '{theme_name}'. Skipping PNG creation.")
+            print(f"    错误：为主题 '{theme_name}' 生成 ASCII 数据失败。跳过 PNG 创建。")
             results['failed'] += 1
             continue
+        # ... （其余检查保持不变） ...
         if is_original and not color_map:
-            print(f"    Error: Failed to generate color map needed for original theme '{theme_name}'. Skipping PNG creation.")
+            print(f"    错误：为原始主题 '{theme_name}' 生成所需的颜色映射失败。跳过 PNG 创建。")
             results['failed'] += 1
             continue
         if not is_original and fg_color is None:
-             print(f"    Error: Theme '{theme_name}' needs a 'foreground' color. Skipping PNG creation.")
+             print(f"    错误：主题 '{theme_name}' 需要 'foreground' 颜色。跳过 PNG 创建。")
              results['failed'] += 1
              continue
 
-        print(f"      ASCII conversion took: {ascii_conv_end - ascii_conv_start:.4f}s")
+        print(f"      ASCII 转换耗时: {ascii_conv_end - ascii_conv_start:.4f}s") # 保留此打印语句
 
-        # 2. Create PNG
+        # 2. 创建 PNG
         resize_suffix = "_resized" if RESIZE_OUTPUT else ""
         output_filename = f"{file_name_no_ext}_ascii_{theme_name}{resize_suffix}.png"
         output_filepath = os.path.join(output_dir, output_filename)
 
-        png_create_start = time.perf_counter()
+        png_create_start = time.perf_counter() # 保留 PNG 创建计时
         png_success = create_ascii_png(
             ascii_lines=ascii_data,
             color_map_image=color_map,
             theme_name=theme_name,
             output_path=output_filepath,
-            font=font,
+            font=font, # 传递加载的字体对象
             background_color=bg_color,
             foreground_color=fg_color,
             original_image_size=original_dimensions
@@ -382,34 +339,25 @@ def process_image_to_ascii_themes(image_path, font, themes_config, output_dir):
 
         if png_success:
             results['success'] += 1
-            print(f"      PNG creation took: {png_create_end - png_create_start:.4f}s")
-            print(f"      Output saved: {output_filename}")
+            print(f"      PNG 创建耗时: {png_create_end - png_create_start:.4f}s") # 保留此打印语句
+            print(f"      输出已保存: {output_filename}")
         else:
             results['failed'] += 1
-            print(f"      Error: Failed to create PNG for theme '{theme_name}'.")
+            print(f"      错误：为主题 '{theme_name}' 创建 PNG 失败。")
 
-        theme_end_time = time.perf_counter()
-        print(f"    Theme '{theme_name}' processed in {theme_end_time - theme_start_time:.4f}s")
+        theme_end_time = time.perf_counter() # 保留主题计时结束点
+        print(f"    主题 '{theme_name}' 处理耗时: {theme_end_time - theme_start_time:.4f}s") # 保留此打印语句
 
     return results
 
-
 def process_directory(dir_path, font, themes_config):
     """
-    Scans a directory, processes all supported images using
-    process_image_to_ascii_themes, and aggregates the results.
-    Args:
-        dir_path (str): Path to the input directory.
-        font (ImageFont): The loaded PIL font object.
-        themes_config (dict): The COLOR_THEMES dictionary.
-    Returns:
-        dict: Aggregated results {'processed_files': int, 'total_success': int,
-               'total_failed': int, 'output_location': str or None}.
+    扫描目录，使用 process_image_to_ascii_themes 处理所有支持的图像，
+    并汇总结果。
     """
-    print(f"\nProcessing directory: {dir_path}")
+    print(f"\n正在处理目录: {dir_path}")
     overall_results = {'processed_files': 0, 'total_success': 0, 'total_failed': 0, 'output_location': None}
 
-    # Create a single output directory for all results from this input directory
     dir_name = os.path.basename(os.path.abspath(dir_path))
     parent_dir = os.path.dirname(os.path.abspath(dir_path))
     main_output_dir = os.path.join(parent_dir, f"{dir_name}_ascii_art")
@@ -417,165 +365,174 @@ def process_directory(dir_path, font, themes_config):
 
     try:
         os.makedirs(main_output_dir, exist_ok=True)
-        print(f"Output will be saved in: {main_output_dir}")
+        print(f"输出将保存在: {main_output_dir}")
     except OSError as e:
-        print(f"Error: Cannot create main output directory '{main_output_dir}': {e}. Aborting.")
-        # Mark all potential files as failed? Difficult to estimate. Mark dir as failed.
-        overall_results['total_failed'] = 1 # Indicate directory level failure
+        print(f"错误：无法创建主输出目录 '{main_output_dir}': {e}。中止。")
+        overall_results['total_failed'] = 1 # 表示目录级别失败
         return overall_results
 
-    print("Scanning for supported image files...")
+    print("正在扫描支持的图像文件...")
     found_files = []
     try:
         for entry in os.scandir(dir_path):
             if entry.is_file() and entry.name.lower().endswith(SUPPORTED_IMAGE_EXTENSIONS):
                 found_files.append(entry.path)
     except FileNotFoundError:
-        print(f"Error: Input directory '{dir_path}' not found during scan.")
+        print(f"错误：扫描期间未找到输入目录 '{dir_path}'。")
         overall_results['total_failed'] = 1
         return overall_results
     except Exception as e:
-        print(f"Error scanning directory '{dir_path}': {e}")
+        print(f"扫描目录 '{dir_path}' 时出错: {e}")
         overall_results['total_failed'] = 1
         return overall_results
 
     if not found_files:
-        print("No supported image files found in the directory.")
+        print("在目录中未找到支持的图像文件。")
         return overall_results
 
-    print(f"Found {len(found_files)} potential image file(s). Starting processing...")
+    print(f"找到 {len(found_files)} 个潜在的图像文件。开始处理...")
     overall_results['processed_files'] = len(found_files)
 
     for image_file_path in found_files:
-        # Process each image, saving results into the single main_output_dir
+        # 处理每个图像，将结果保存到单个 main_output_dir 中
         image_results = process_image_to_ascii_themes(
             image_path=image_file_path,
-            font=font,
+            font=font, # 传递加载的字体对象
             themes_config=themes_config,
-            output_dir=main_output_dir # All outputs go here
+            output_dir=main_output_dir # 所有输出都到这里
         )
         overall_results['total_success'] += image_results['success']
         overall_results['total_failed'] += image_results['failed']
 
     return overall_results
 
-# --- Input/Output Functions ---
 
 def get_input_path():
-    """Gets the input path (file or directory) from the user."""
+    """获取用户的输入路径（文件或目录）。"""
     input_path = ""
     while not input_path:
         try:
-            input_path = input("Enter the path to the image file or directory: ").strip().strip("'\"")
+            input_path = input("输入图像文件或目录的路径: ").strip().strip("'\"")
             if not input_path:
-                print("Input cannot be empty.")
+                print("输入不能为空。")
             elif not os.path.exists(input_path):
-                 print(f"Error: Path does not exist: '{input_path}'")
-                 input_path = "" # Ask again
+                 print(f"错误：路径不存在: '{input_path}'")
+                 input_path = "" # 再次询问
         except KeyboardInterrupt:
-            print("\nOperation cancelled by user.")
+            print("\n操作被用户取消。")
             return None
     return input_path
 
-def print_summary(results, duration, font_load_duration):
-    """Prints the final processing summary."""
+# --- 修改后的函数签名 ---
+def print_summary(results, duration):
+    """打印最终的处理摘要。"""
     print("\n===================================")
-    print("        Processing Summary")
+    print("        处理摘要")
     print("===================================")
 
     input_type = results.get('input_type', 'unknown')
     output_location = results.get('output_location')
 
     if input_type == 'invalid':
-        print("Status: Failed (Invalid input path)")
+        print("状态：失败（无效的输入路径）")
     elif input_type == 'font_error':
-        print("Status: Failed (Could not load required font)")
+        print("状态：失败（无法加载所需字体）")
     elif input_type == 'file':
         success_count = results.get('total_success', 0)
         fail_count = results.get('total_failed', 0)
-        print(f"Input Type: Single File")
-        print(f"Themes Processed: {success_count + fail_count}")
-        print(f"  - Successful PNGs: {success_count}")
-        print(f"  - Failed/Skipped Themes: {fail_count}")
+        print(f"输入类型：单个文件")
+        print(f"已处理的主题数：{success_count + fail_count}")
+        print(f"  - 成功的 PNG 数量：{success_count}")
+        print(f"  - 失败/跳过的主题数量：{fail_count}")
         if success_count > 0 and output_location:
-            print(f"Output Location: {output_location}")
+            print(f"输出位置：{output_location}")
     elif input_type == 'directory':
         processed_files = results.get('processed_files', 0)
         success_count = results.get('total_success', 0)
         fail_count = results.get('total_failed', 0)
-        print(f"Input Type: Directory")
-        print(f"Image Files Found/Attempted: {processed_files}")
-        print(f"Total PNGs Generated Successfully: {success_count}")
-        print(f"Total Failed/Skipped Theme Attempts: {fail_count}")
+        print(f"输入类型：目录")
+        print(f"找到/尝试处理的图像文件数：{processed_files}")
+        print(f"成功生成的 PNG 总数：{success_count}")
+        print(f"失败/跳过的主题尝试总数：{fail_count}")
         if output_location:
-             print(f"Output Location: {output_location}")
+             print(f"输出位置：{output_location}")
 
     print("-----------------------------------")
-    print("Execution Time:")
-    print(f"  - Font Loading: {font_load_duration:.4f} seconds")
-    print(f"  - Total Processing: {duration:.4f} seconds") # Includes all image processing
+    print("执行时间:")
+    print(f"  - 总处理时间：{duration:.4f} 秒") # 保留总处理时间
     print("===================================")
 
 
-# --- Main Orchestration ---
+
 def main():
-    """Main execution function."""
-    print("--- ASCII Art Generator ---")
+    """主执行函数。"""
+    print("--- ASCII 艺术生成器 ---")
 
-    # --- Load Font (Essential, do first) ---
-    print("Loading font...")
-    font_load_start = time.perf_counter()
+    # --- 直接从脚本目录加载字体 ---
+    print("正在加载字体...")
     try:
-        font = load_font(FONT_NAMES, FONT_SIZE)
-    except Exception as e:
-        font_load_end = time.perf_counter()
-        print(f"Fatal Error: Could not load font. {e}")
+        # 获取脚本所在的目录
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        # 构建字体文件的完整路径
+        font_path = os.path.join(script_dir, FONT_FILENAME)
+        print(f"尝试从以下路径加载字体: {font_path}")
+        # 尝试加载指定的字体文件
+        font = ImageFont.truetype(font_path, FONT_SIZE)
+        print("字体加载成功。")
+    except IOError:
+        print(f"致命错误：无法从脚本目录加载字体文件 '{FONT_FILENAME}'。")
+        print(f"请确保 '{FONT_FILENAME}' 与脚本在同一目录中 ({script_dir})。")
         results = {'input_type': 'font_error'}
-        print_summary(results, 0, font_load_end - font_load_start)
+        print_summary(results, 0) # 传递 0 作为持续时间，因为它提前失败了
         sys.exit(1)
-    font_load_end = time.perf_counter()
-    font_load_duration = font_load_end - font_load_start
-    print(f"Font loaded in {font_load_duration:.4f} seconds.")
+    except Exception as e:
+        print(f"致命错误：加载字体 '{font_path}' 时发生意外错误: {e}")
+        results = {'input_type': 'font_error'}
+        print_summary(results, 0) # 传递 0 作为持续时间，因为它提前失败了
+        sys.exit(1)
+    # --- 字体加载部分结束 ---
 
-    # --- Get Input Path ---
+    # --- 获取输入路径 ---
     input_path = get_input_path()
     if input_path is None:
-        sys.exit(0) # User cancelled
+        sys.exit(0) # 用户取消
 
-    # --- Start Processing Timer ---
-    processing_start_time = time.perf_counter()
-    results = {} # Initialize results dict
+    # --- 开始处理计时器 ---
+    processing_start_time = time.perf_counter() # 保留总处理计时器
+    results = {} # 初始化结果字典
 
-    # --- Determine Path Type and Process ---
+    # --- 判断路径类型并处理 ---
     if os.path.isfile(input_path):
         results['input_type'] = 'file'
-        # Define output dir relative to the input file's location
+        # 定义相对于输入文件位置的输出目录
         file_dir = os.path.dirname(os.path.abspath(input_path))
         file_name_no_ext, _ = os.path.splitext(os.path.basename(input_path))
         output_dir = os.path.join(file_dir, f"{file_name_no_ext}_ascii_art")
         results['output_location'] = output_dir
-        # Process the single image
+        # 处理单个图像
+        # 传递加载的字体对象
         img_results = process_image_to_ascii_themes(input_path, font, COLOR_THEMES, output_dir)
         results['total_success'] = img_results['success']
         results['total_failed'] = img_results['failed']
 
     elif os.path.isdir(input_path):
         results['input_type'] = 'directory'
-        # Process the directory
+        # 处理目录
+        # 传递加载的字体对象
         dir_results = process_directory(input_path, font, COLOR_THEMES)
-        results.update(dir_results) # Merge results from process_directory
+        results.update(dir_results) # 合并来自 process_directory 的结果
 
     else:
-        # Should have been caught by get_input_path, but as a fallback
-        print(f"Error: Input path '{input_path}' is not a valid file or directory.")
+        # 应该在 get_input_path 中被捕获，但作为后备
+        print(f"错误：输入路径 '{input_path}' 不是有效的文件或目录。")
         results['input_type'] = 'invalid'
 
-    # --- Stop Processing Timer ---
-    processing_end_time = time.perf_counter()
-    total_processing_duration = processing_end_time - processing_start_time
+    # --- 停止处理计时器 ---
+    processing_end_time = time.perf_counter() # 保留总处理计时器结束点
+    total_processing_duration = processing_end_time - processing_start_time # 保留持续时间计算
 
-    # --- Print Summary ---
-    print_summary(results, total_processing_duration, font_load_duration)
+    # --- 打印摘要 ---
+    print_summary(results, total_processing_duration)
 
 
 if __name__ == "__main__":
