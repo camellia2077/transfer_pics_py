@@ -14,7 +14,7 @@ DEFAULT_FONT_FILENAME = "Consolas.ttf" # 默认字体文件名
 DEFAULT_FONT_SIZE = 12 # 默认字体大小
 
 # --- 其他常量 ---
-ASCII_CHARS = "$@B%8&WM#*oahkbdpqwmZO0QLCJUYXzcvunxrjft/\\|()1{}[]?-_+~<>i!lI;:,\"^`'. "
+ASCII_CHARS = "@#%&MWB8$*hkbdpqwmZOQYCU0XVAaovunxzcrjft?1LJ(){}[]I|\\/!+~<>;l^i-_=:,`' "
 RESIZE_OUTPUT = True # 设置为 True 以将输出 PNG 调整为原始宽高比
 SUPPORTED_IMAGE_EXTENSIONS = ('.png', '.jpg', '.jpeg', '.bmp', '.gif', '.tiff', '.webp')
 
@@ -52,72 +52,78 @@ def load_config(config_filepath):
     }
     print(f"尝试从以下路径加载配置文件: {config_filepath}")
     if not os.path.exists(config_filepath):
-        print("未找到 config.txt。将使用默认设置。")
+        # --- 修改这里的打印信息 ---
+        print("未找到 config.ini。将使用默认设置。")
         print(f"  默认 OUTPUT_WIDTH_CHARS = {DEFAULT_OUTPUT_WIDTH_CHARS}")
         print(f"  默认 FONT_FILENAME = {DEFAULT_FONT_FILENAME}")
         print(f"  默认 FONT_SIZE = {DEFAULT_FONT_SIZE}")
         return config_values
 
-    parser = configparser.ConfigParser(allow_no_value=True) # 允许没有值的键（虽然我们这里不用）
+    parser = configparser.ConfigParser(allow_no_value=True)
     try:
-        # 使用 utf-8 读取文件，兼容中文注释等
         parser.read(config_filepath, encoding='utf-8')
-        print("已找到 config.txt。正在加载设置...")
+        # --- 修改这里的打印信息 ---
+        print("已找到 config.ini。正在加载设置...")
 
         if 'Settings' in parser:
             settings_section = parser['Settings']
 
             # 加载 OUTPUT_WIDTH_CHARS
             try:
-                # 使用 getint 读取整数，如果失败或不存在，使用 fallback
                 loaded_width = settings_section.getint('OUTPUT_WIDTH_CHARS', fallback=DEFAULT_OUTPUT_WIDTH_CHARS)
-                if loaded_width > 0: # 确保宽度是正数
+                if loaded_width > 0:
                     config_values["output_width_chars"] = loaded_width
                     print(f"  已加载 OUTPUT_WIDTH_CHARS = {config_values['output_width_chars']}")
                 else:
-                    print(f"  警告: config.txt 中的 OUTPUT_WIDTH_CHARS 值 ({loaded_width}) 无效 (必须 > 0)。使用默认值 {DEFAULT_OUTPUT_WIDTH_CHARS}。")
+                    # --- 修改这里的打印信息 ---
+                    print(f"  警告: config.ini 中的 OUTPUT_WIDTH_CHARS 值 ({loaded_width}) 无效 (必须 > 0)。使用默认值 {DEFAULT_OUTPUT_WIDTH_CHARS}。")
                     config_values["output_width_chars"] = DEFAULT_OUTPUT_WIDTH_CHARS
             except ValueError:
-                print(f"  警告: config.txt 中的 OUTPUT_WIDTH_CHARS 值不是有效的整数。使用默认值 {DEFAULT_OUTPUT_WIDTH_CHARS}。")
+                 # --- 修改这里的打印信息 ---
+                print(f"  警告: config.ini 中的 OUTPUT_WIDTH_CHARS 值不是有效的整数。使用默认值 {DEFAULT_OUTPUT_WIDTH_CHARS}。")
                 config_values["output_width_chars"] = DEFAULT_OUTPUT_WIDTH_CHARS
             except KeyError:
-                 print(f"  信息: config.txt 中未找到 OUTPUT_WIDTH_CHARS。使用默认值 {DEFAULT_OUTPUT_WIDTH_CHARS}。")
+                 # --- 修改这里的打印信息 ---
+                 print(f"  信息: config.ini 中未找到 OUTPUT_WIDTH_CHARS。使用默认值 {DEFAULT_OUTPUT_WIDTH_CHARS}。")
                  config_values["output_width_chars"] = DEFAULT_OUTPUT_WIDTH_CHARS
-
 
             # 加载 FONT_FILENAME (字符串)
             try:
                 loaded_filename = settings_section.get('FONT_FILENAME', fallback=DEFAULT_FONT_FILENAME).strip()
-                if loaded_filename: # 确保文件名不是空的
+                if loaded_filename:
                      config_values["font_filename"] = loaded_filename
                      print(f"  已加载 FONT_FILENAME = {config_values['font_filename']}")
                 else:
-                    print(f"  警告: config.txt 中的 FONT_FILENAME 为空。使用默认值 {DEFAULT_FONT_FILENAME}。")
+                    # --- 修改这里的打印信息 ---
+                    print(f"  警告: config.ini 中的 FONT_FILENAME 为空。使用默认值 {DEFAULT_FONT_FILENAME}。")
                     config_values["font_filename"] = DEFAULT_FONT_FILENAME
             except KeyError:
-                print(f"  信息: config.txt 中未找到 FONT_FILENAME。使用默认值 {DEFAULT_FONT_FILENAME}。")
+                 # --- 修改这里的打印信息 ---
+                print(f"  信息: config.ini 中未找到 FONT_FILENAME。使用默认值 {DEFAULT_FONT_FILENAME}。")
                 config_values["font_filename"] = DEFAULT_FONT_FILENAME
-
 
             # 加载 FONT_SIZE
             try:
                 loaded_size = settings_section.getint('FONT_SIZE', fallback=DEFAULT_FONT_SIZE)
-                if loaded_size > 0: # 确保字体大小是正数
+                if loaded_size > 0:
                     config_values["font_size"] = loaded_size
                     print(f"  已加载 FONT_SIZE = {config_values['font_size']}")
                 else:
-                    print(f"  警告: config.txt 中的 FONT_SIZE 值 ({loaded_size}) 无效 (必须 > 0)。使用默认值 {DEFAULT_FONT_SIZE}。")
+                     # --- 修改这里的打印信息 ---
+                    print(f"  警告: config.ini 中的 FONT_SIZE 值 ({loaded_size}) 无效 (必须 > 0)。使用默认值 {DEFAULT_FONT_SIZE}。")
                     config_values["font_size"] = DEFAULT_FONT_SIZE
             except ValueError:
-                print(f"  警告: config.txt 中的 FONT_SIZE 值不是有效的整数。使用默认值 {DEFAULT_FONT_SIZE}。")
+                 # --- 修改这里的打印信息 ---
+                print(f"  警告: config.ini 中的 FONT_SIZE 值不是有效的整数。使用默认值 {DEFAULT_FONT_SIZE}。")
                 config_values["font_size"] = DEFAULT_FONT_SIZE
             except KeyError:
-                print(f"  信息: config.txt 中未找到 FONT_SIZE。使用默认值 {DEFAULT_FONT_SIZE}。")
+                 # --- 修改这里的打印信息 ---
+                print(f"  信息: config.ini 中未找到 FONT_SIZE。使用默认值 {DEFAULT_FONT_SIZE}。")
                 config_values["font_size"] = DEFAULT_FONT_SIZE
 
         else:
-            print("警告: 在 config.txt 中未找到 [Settings] 部分。将使用所有默认设置。")
-            # 确保返回的是默认值
+            # --- 修改这里的打印信息 ---
+            print("警告: 在 config.ini 中未找到 [Settings] 部分。将使用所有默认设置。")
             config_values = {
                 "output_width_chars": DEFAULT_OUTPUT_WIDTH_CHARS,
                 "font_filename": DEFAULT_FONT_FILENAME,
@@ -125,14 +131,16 @@ def load_config(config_filepath):
             }
 
     except configparser.Error as e:
-        print(f"错误: 读取 config.txt 时出错: {e}。将使用所有默认设置。")
+        # --- 修改这里的打印信息 ---
+        print(f"错误: 读取 config.ini 时出错: {e}。将使用所有默认设置。")
         config_values = {
             "output_width_chars": DEFAULT_OUTPUT_WIDTH_CHARS,
             "font_filename": DEFAULT_FONT_FILENAME,
             "font_size": DEFAULT_FONT_SIZE,
         }
     except Exception as e:
-         print(f"错误: 处理 config.txt 时发生意外错误: {e}。将使用所有默认设置。")
+         # --- 修改这里的打印信息 ---
+         print(f"错误: 处理 config.ini 时发生意外错误: {e}。将使用所有默认设置。")
          config_values = {
              "output_width_chars": DEFAULT_OUTPUT_WIDTH_CHARS,
              "font_filename": DEFAULT_FONT_FILENAME,
@@ -580,15 +588,18 @@ def main():
 
     try:
         script_dir = os.path.dirname(os.path.abspath(__file__))
-        config_filepath = os.path.join(script_dir, "config.txt")
+        # --- 修改这里的文件名 ---
+        config_filename = "config.ini"
+        config_filepath = os.path.join(script_dir, config_filename)
 
         # --- 加载配置 ---
-        config = load_config(config_filepath)
+        config = load_config(config_filepath) # 传递正确的路径
         output_width_chars = config["output_width_chars"]
         font_filename = config["font_filename"]
         font_size = config["font_size"]
 
         # --- 加载字体 ---
+        # ... (字体加载逻辑保持不变) ...
         print("正在加载字体...")
         font = None
         font_path = os.path.join(script_dir, font_filename)
@@ -596,16 +607,14 @@ def main():
         try:
             print(f"尝试从以下路径加载字体: {font_path} (大小: {font_size})")
             if not os.path.exists(font_path):
-                # 如果本地路径不存在，尝试让Pillow查找系统字体
                 print(f"警告: 本地路径未找到 '{font_path}'。尝试系统字体 '{font_filename}'...")
                 try:
                     font = ImageFont.truetype(font_filename, font_size)
                     print(f"成功加载系统字体 '{font_filename}'。")
                 except IOError:
                      print(f"错误: 无法在本地或系统中找到/加载字体 '{font_filename}'。")
-                     raise # 重新引发IOError以被外部捕获
+                     raise
             else:
-                # 本地路径存在，直接加载
                 font = ImageFont.truetype(font_path, font_size)
                 print("字体加载成功。")
 
@@ -614,60 +623,58 @@ def main():
             print(f"错误详情: {e}")
             print(f"请确保字体文件存在于脚本目录 ({script_dir}) 或系统字体路径中，并且名称 '{font_filename}' 正确。")
             results = {'input_type': 'font_error', 'font_name': font_filename, 'font_path_tried': font_path}
-            font_load_error = True # 设置标志位
+            font_load_error = True
         except Exception as e:
             print(f"致命错误：加载字体时发生意外错误: {e}")
             results = {'input_type': 'font_error', 'font_name': font_filename, 'font_path_tried': font_path}
-            font_load_error = True # 设置标志位
+            font_load_error = True
 
         if font_load_error:
              duration = time.perf_counter() - start_time
              print_summary(results, duration)
              sys.exit(1)
-        # --- 字体加载部分结束 ---
 
         # --- 获取输入路径 ---
         input_path = get_input_path()
         if input_path is None:
             print("未提供输入路径或操作已取消。退出。")
-            sys.exit(0) # 用户取消或未输入
+            sys.exit(0)
 
         # --- 开始处理计时器 (主要处理部分) ---
         processing_start_time = time.perf_counter()
 
         # --- 判断路径类型并处理 ---
+        # ... (文件和目录处理逻辑保持不变, 确保传递 output_width_chars) ...
         if os.path.isfile(input_path):
             results['input_type'] = 'file'
             file_dir = os.path.dirname(os.path.abspath(input_path))
             file_name_no_ext, _ = os.path.splitext(os.path.basename(input_path))
             output_dir = os.path.join(file_dir, f"{file_name_no_ext}_ascii_art")
             results['output_location'] = output_dir
-            # 处理单个图像 (传递加载的字体和配置宽度)
             img_results = process_image_to_ascii_themes(
                 input_path,
                 font,
                 COLOR_THEMES,
                 output_dir,
-                output_width_chars # 传递配置宽度
+                output_width_chars
             )
             results['total_success'] = img_results['success']
             results['total_failed'] = img_results['failed']
 
         elif os.path.isdir(input_path):
             results['input_type'] = 'directory'
-            # 处理目录 (传递加载的字体和配置宽度)
             dir_results = process_directory(
                 input_path,
                 font,
                 COLOR_THEMES,
-                output_width_chars # 传递配置宽度
+                output_width_chars
              )
-            results.update(dir_results) # 合并结果
+            results.update(dir_results)
 
         else:
-            # 这个情况理论上 get_input_path() 应该已经处理了
             print(f"错误：输入路径 '{input_path}' 不是有效的文件或目录。")
             results['input_type'] = 'invalid'
+
 
         # --- 停止处理计时器 ---
         processing_end_time = time.perf_counter()
@@ -676,6 +683,7 @@ def main():
         # --- 打印摘要 ---
         print_summary(results, total_processing_duration)
 
+    # --- 异常处理保持不变 ---
     except Exception as e:
          print("\n--- 发生未处理的异常 ---")
          print(f"错误类型: {type(e).__name__}")
@@ -683,17 +691,15 @@ def main():
          print("详细追溯信息:")
          traceback.print_exc()
          print("--------------------------")
-         results['input_type'] = 'runtime_error' # 或其他表示意外错误的类型
+         results['input_type'] = 'runtime_error'
          duration = time.perf_counter() - start_time
          print_summary(results, duration)
          sys.exit(1)
 
-
+# --- 主程序入口保持不变 ---
 if __name__ == "__main__":
-    # 确保在打包成可执行文件时也能找到资源（如果需要）
     if getattr(sys, 'frozen', False):
-        # 如果是 PyInstaller 打包的应用
         application_path = os.path.dirname(sys.executable)
-        os.chdir(application_path) # 将当前工作目录更改为可执行文件所在目录
+        os.chdir(application_path)
         print(f"检测到打包环境，当前目录已设置为: {application_path}")
     main()
