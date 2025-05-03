@@ -5,8 +5,9 @@ from PIL import Image, ImageDraw, ImageFont
 import math
 import traceback
 import time
-# import numpy as np # NumPy is no longer needed for the core conversion logic
 import configparser # 导入配置解析器
+import concurrent.futures # <--- 新增：用于并行处理
+import multiprocessing # <--- 新增：获取 CPU 核心数
 
 # --- 默认配置 (如果 config.txt 不存在或无效则使用) ---
 DEFAULT_OUTPUT_WIDTH_CHARS = 128 # 默认 ASCII 表示宽度
@@ -23,7 +24,7 @@ SUPPORTED_IMAGE_EXTENSIONS = ('.png', '.jpg', '.jpeg', '.bmp', '.gif', '.tiff', 
 COLOR_THEMES = {
     "dark":              {"background": "black", "foreground": "white"},#黑底白字
     "green_term":        {"background": "black", "foreground": "lime"},#黑底绿字
-    "light":             {"background": "#f0f0f0", "foreground": "black"}, #灰底黑字111
+    "light":             {"background": "#f0f0f0", "foreground": "black"}, #灰底黑字
     "amber_term":        {"background": "#1c1c1c", "foreground": "#FFBF00"},#黑底黄字
     "original_dark_bg":  {"background": "#363636", "foreground": None}, #黑底彩色
     "original_light_bg": {"background": "#f0f0f0", "foreground": None}, # 灰底彩色
@@ -31,12 +32,12 @@ COLOR_THEMES = {
 
 # --- 选择要生成的主题 (无变化) ---
 THEMES_TO_GENERATE = [
-    #"dark",
+    # "dark",
     # "green_term",
-    "original_dark_bg",
+    #"original_dark_bg",
     "original_light_bg",
     "light",
-    #"amber_term",
+    # "amber_term",
 ]
 
 # --- 配置加载函数 (无变化) ---
@@ -142,7 +143,7 @@ def load_config(config_filepath):
 # --- 图像处理函数 ---
 
 # ==============================================================================
-# *** 修改后的 image_to_ascii 函数 ***
+# *** image_to_ascii 函数 (无变化) ***
 # ==============================================================================
 def image_to_ascii(color_image, width_chars, active_theme_name):
     """
@@ -210,12 +211,12 @@ def image_to_ascii(color_image, width_chars, active_theme_name):
 
                     # 确保是有效的 RGB 元组
                     if not isinstance(sampled_color, tuple) or len(sampled_color) < 3:
-                         # Fallback if pixel access didn't return expected tuple (e.g., for palette images)
-                         pixel_img = image_rgb.crop((x_orig, y_orig, x_orig + 1, y_orig + 1))
-                         sampled_color = pixel_img.convert("RGB").getpixel((0,0))
-                         if not isinstance(sampled_color, tuple) or len(sampled_color) < 3:
-                              print(f"警告：无法在 ({x_orig}, {y_orig}) 获取有效的 RGB 颜色。使用默认黑色。")
-                              sampled_color = (0, 0, 0)
+                        # Fallback if pixel access didn't return expected tuple (e.g., for palette images)
+                        pixel_img = image_rgb.crop((x_orig, y_orig, x_orig + 1, y_orig + 1))
+                        sampled_color = pixel_img.convert("RGB").getpixel((0,0))
+                        if not isinstance(sampled_color, tuple) or len(sampled_color) < 3:
+                            print(f"警告：无法在 ({x_orig}, {y_orig}) 获取有效的 RGB 颜色。使用默认黑色。")
+                            sampled_color = (0, 0, 0)
                 except IndexError:
                     print(f"警告：点采样索引 ({x_orig}, {y_orig}) 超出范围。使用默认黑色。")
                     sampled_color = (0, 0, 0)
@@ -251,21 +252,23 @@ def image_to_ascii(color_image, width_chars, active_theme_name):
     except Exception as e:
         # 保留原始的异常处理
         print(f"在主题 '{active_theme_name}' 的 ASCII 转换和颜色采样过程中出错: {e}")
-        traceback.print_exc()
+        # traceback.print_exc() # 在子进程中打印完整的traceback可能比较混乱，可以选择性注释掉
         return None
 # ==============================================================================
-# *** image_to_ascii 函数修改结束 ***
+# *** image_to_ascii 函数修改结束 (无变化) ***
 # ==============================================================================
 
 
-# create_ascii_png 函数 (无变化)
+# ==============================================================================
+# *** create_ascii_png 函数 (无变化) ***
+# ==============================================================================
 def create_ascii_png(ascii_char_color_data, # 新参数：包含字符和颜色的数据
-                      theme_name,
-                      output_path,
-                      font, # 接收已加载字体
-                      background_color,
-                      foreground_color, # 仍然需要用于非 'original' 主题
-                      original_image_size=None):
+                     theme_name,
+                     output_path,
+                     font, # 接收已加载字体
+                     background_color,
+                     foreground_color, # 仍然需要用于非 'original' 主题
+                     original_image_size=None):
     """
     根据包含字符和采样颜色的数据创建 PNG 图像。
     (函数体无变化)
@@ -318,16 +321,16 @@ def create_ascii_png(ascii_char_color_data, # 新参数：包含字符和颜色�
                 size_w = draw.textsize(sample_line_text, font=font)
                 text_width = size_w[0]
             except AttributeError: # Pillow < 8.0.0?
-                 print("警告：textsize 不可用。正在使用更旧的 font.getsize。尺寸可能非常不准确。")
-                 try:
-                     (_, h) = font.getsize('M') # 用 'M' 的高度近似
-                     line_height = int(h * 1.2) # 增加一点行间距
-                     w = sum(font.getsize(c)[0] for c in sample_line_text)
-                     text_width = w
-                 except Exception as e_getsize:
-                      print(f"错误: 无法使用任何方法测量文本尺寸: {e_getsize}. 使用默认值。")
-                      line_height = font_size_val + 4
-                      text_width = font_size_val * len(sample_line_text)
+                print("警告：textsize 不可用。正在使用更旧的 font.getsize。尺寸可能非常不准确。")
+                try:
+                    (_, h) = font.getsize('M') # 用 'M' 的高度近似
+                    line_height = int(h * 1.2) # 增加一点行间距
+                    w = sum(font.getsize(c)[0] for c in sample_line_text)
+                    text_width = w
+                except Exception as e_getsize:
+                    print(f"错误: 无法使用任何方法测量文本尺寸: {e_getsize}. 使用默认值。")
+                    line_height = font_size_val + 4
+                    text_width = font_size_val * len(sample_line_text)
 
 
         # 确保尺寸有效
@@ -396,7 +399,8 @@ def create_ascii_png(ascii_char_color_data, # 新参数：包含字符和颜色�
                 except AttributeError:
                     resample_filter = Image.LANCZOS # 兼容旧版 Pillow
                 try:
-                    print(f"  调整 PNG 大小为 {img_width}x{target_height} 以匹配原始宽高比...")
+                    # 注意：这个 print 语句可能在子进程中执行，输出会混合
+                    # print(f"   调整 PNG 大小为 {img_width}x{target_height} 以匹配原始宽高比...")
                     output_image = output_image.resize((img_width, target_height), resample_filter)
                 except Exception as resize_err:
                     print(f"警告: 调整大小失败: {resize_err}. 使用原始渲染大小。")
@@ -411,16 +415,24 @@ def create_ascii_png(ascii_char_color_data, # 新参数：包含字符和颜色�
 
     except Exception as e:
         print(f"在路径 '{output_path}' 为主题 '{theme_name}' 创建或保存 PNG 时出错: {e}")
-        traceback.print_exc()
+        # traceback.print_exc() # 在子进程中打印完整的traceback可能比较混乱
         return False
+# ==============================================================================
+# *** create_ascii_png 函数修改结束 (无变化) ***
+# ==============================================================================
 
 
-# --- 核心处理函数 (无变化) ---
+# --- 核心处理函数 (无变化，但现在会被并行调用) ---
 def process_image_to_ascii_themes(image_path, font, themes_config, base_output_dir, output_width_chars):
     """
     处理单个图像文件，将其所有主题输出保存在 base_output_dir 下以图像名命名的子目录中。
+    此函数现在可能在单独的进程中执行。
+    返回一个字典，包含成功和失败的主题数量。
     """
-    print(f"\n正在处理图像: {image_path}")
+    # 注意：此函数内的 print 语句可能会与其他进程的输出交错
+    process_id = os.getpid() # 获取当前进程ID，方便调试
+    short_image_name = os.path.basename(image_path)
+    print(f"[PID:{process_id}] 开始处理图像: {short_image_name}")
     results = {'success': 0, 'failed': 0}
     original_img = None
     original_dimensions = (0, 0)
@@ -432,39 +444,41 @@ def process_image_to_ascii_themes(image_path, font, themes_config, base_output_d
     # --- 构建并创建此图像的特定输出子目录 ---
     image_specific_output_dir = os.path.join(base_output_dir, file_name_no_ext)
     try:
+        # 确保子目录存在（可能由主进程创建，但这里检查/创建更安全）
         os.makedirs(image_specific_output_dir, exist_ok=True)
-        print(f"  输出子目录: {image_specific_output_dir}") # 确认子目录路径
+        # print(f"[PID:{process_id}]   输出子目录: {image_specific_output_dir}")
     except OSError as e:
-        print(f"  错误：无法为此图像创建输出子目录 '{image_specific_output_dir}': {e}。跳过此图像。")
+        print(f"[PID:{process_id}]   错误：无法为此图像创建输出子目录 '{image_specific_output_dir}': {e}。跳过此图像。")
         results['failed'] = len(THEMES_TO_GENERATE) # 标记所有主题都失败
-        return results
+        return results # <--- 返回错误结果
 
     # --- 加载图像 ---
     try:
         with Image.open(image_path) as img_opened:
+            # 确保在处理前转换为 RGB，避免后续问题
             original_img = img_opened.convert('RGB')
             original_dimensions = original_img.size
         if not original_img:
             raise ValueError("无法加载或转换图像。")
-        print(f"  图像已加载 ({original_dimensions[0]}x{original_dimensions[1]})")
+        # print(f"[PID:{process_id}]   图像已加载 ({original_dimensions[0]}x{original_dimensions[1]})")
     except FileNotFoundError:
-        print(f"  错误：在 '{image_path}' 未找到图像文件。跳过。")
+        print(f"[PID:{process_id}]   错误：在 '{image_path}' 未找到图像文件。跳过。")
         results['failed'] = len(THEMES_TO_GENERATE)
-        return results
+        return results # <--- 返回错误结果
     except Exception as e:
-        print(f"  打开或转换图像文件 '{os.path.basename(image_path)}' 时出错: {e}")
-        traceback.print_exc()
+        print(f"[PID:{process_id}]   打开或转换图像文件 '{os.path.basename(image_path)}' 时出错: {e}")
+        # traceback.print_exc() # 在子进程中打印可能混乱
         results['failed'] = len(THEMES_TO_GENERATE)
-        return results
+        return results # <--- 返回错误结果
 
-    # --- 处理每个主题 ---
+    # --- 处理每个主题 (按顺序，但在图像级别是并行的) ---
     for theme_name in THEMES_TO_GENERATE:
         theme_start_time = time.perf_counter()
-        print(f"  - 正在处理主题: '{theme_name}'...")
+        # print(f"[PID:{process_id}]   - 正在处理主题: '{theme_name}'...")
 
         theme_details = themes_config.get(theme_name)
         if not theme_details:
-            print(f"    警告：在配置中未找到主题 '{theme_name}'。跳过。")
+            print(f"[PID:{process_id}]     警告：在配置中未找到主题 '{theme_name}'。跳过。")
             results['failed'] += 1
             continue
 
@@ -481,11 +495,11 @@ def process_image_to_ascii_themes(image_path, font, themes_config, base_output_d
         ascii_conv_end = time.perf_counter()
 
         if not ascii_char_color_data:
-            print(f"    错误：为主题 '{theme_name}' 生成 ASCII 数据或采样颜色失败。跳过 PNG 创建。")
+            print(f"[PID:{process_id}]     错误：为主题 '{theme_name}' 生成 ASCII 数据或采样颜色失败。跳过 PNG 创建。")
             results['failed'] += 1
             continue
 
-        print(f"      ASCII 转换与颜色采样耗时: {ascii_conv_end - ascii_conv_start:.4f}s")
+        # print(f"[PID:{process_id}]       ASCII 转换与颜色采样耗时: {ascii_conv_end - ascii_conv_start:.4f}s")
 
         # 2. 创建 PNG (保存到 image_specific_output_dir)
         resize_suffix = "_resized" if RESIZE_OUTPUT else ""
@@ -506,24 +520,30 @@ def process_image_to_ascii_themes(image_path, font, themes_config, base_output_d
 
         if png_success:
             results['success'] += 1
-            print(f"      PNG 创建耗时: {png_create_end - png_create_start:.4f}s")
-            print(f"      输出已保存: {os.path.join(file_name_no_ext, output_filename)}")
+            # print(f"[PID:{process_id}]       PNG 创建耗时: {png_create_end - png_create_start:.4f}s")
+            # print(f"[PID:{process_id}]       输出已保存: {os.path.join(file_name_no_ext, output_filename)}")
         else:
             results['failed'] += 1
-            print(f"      错误：为主题 '{theme_name}' 创建 PNG 失败。")
+            print(f"[PID:{process_id}]     错误：为主题 '{theme_name}' 创建 PNG 失败。")
 
         theme_end_time = time.perf_counter()
-        print(f"    主题 '{theme_name}' 处理耗时: {theme_end_time - theme_start_time:.4f}s")
+        # print(f"[PID:{process_id}]     主题 '{theme_name}' 处理耗时: {theme_end_time - theme_start_time:.4f}s")
 
+    print(f"[PID:{process_id}] 完成处理图像: {short_image_name} (成功: {results['success']}, 失败: {results['failed']})")
+    # 返回处理结果
     return results
 
-# --- process_directory 函数 (无变化) ---
+# ==============================================================================
+# *** 修改后的 process_directory 函数 ***
+# ==============================================================================
 def process_directory(dir_path, font, themes_config, output_width_chars):
     """
-    扫描目录，处理所有支持的图像，并将每个图像的结果保存到单独的子目录中。
+    扫描目录，使用进程池并行处理所有支持的图像。
+    并将每个图像的结果保存到单独的子目录中。
     """
     print(f"\n正在处理目录: {dir_path}")
     overall_results = {'processed_files': 0, 'total_success': 0, 'total_failed': 0, 'output_location': None}
+    start_dir_processing_time = time.perf_counter() # 记录目录处理开始时间
 
     dir_name = os.path.basename(os.path.normpath(dir_path))
     parent_dir = os.path.dirname(os.path.abspath(dir_path))
@@ -535,7 +555,7 @@ def process_directory(dir_path, font, themes_config, output_width_chars):
         print(f"主输出目录: {main_output_dir}")
     except OSError as e:
         print(f"错误：无法创建或访问主输出目录 '{main_output_dir}': {e}。中止。")
-        overall_results['total_failed'] = 1
+        overall_results['total_failed'] = 1 # 标记为失败
         return overall_results
 
     print("正在扫描支持的图像文件...")
@@ -557,21 +577,67 @@ def process_directory(dir_path, font, themes_config, output_width_chars):
         print("在目录中未找到支持的图像文件。")
         return overall_results
 
-    print(f"找到 {len(found_files)} 个潜在的图像文件。开始处理...")
-    overall_results['processed_files'] = len(found_files)
+    num_files = len(found_files)
+    print(f"找到 {num_files} 个支持的图像文件。开始并行处理...")
+    overall_results['processed_files'] = num_files
 
-    for image_file_path in found_files:
-        image_results = process_image_to_ascii_themes(
-            image_path=image_file_path,
-            font=font,
-            themes_config=themes_config,
-            base_output_dir=main_output_dir,
-            output_width_chars=output_width_chars
-        )
-        overall_results['total_success'] += image_results['success']
-        overall_results['total_failed'] += image_results['failed']
+    # --- 使用 ProcessPoolExecutor 进行并行处理 ---
+    # 设置最大工作进程数，默认为 CPU 核心数，可以调整
+    # max_workers = min(multiprocessing.cpu_count(), 4) # 例如，限制最多4个进程
+    max_workers = None # None 表示使用 os.cpu_count()
+    futures = {} # 用于存储 Future 对象和对应的图像路径
+
+    # 使用 try...finally 确保 executor 被关闭
+    executor = concurrent.futures.ProcessPoolExecutor(max_workers=max_workers)
+    try:
+        # 提交所有任务
+        for image_file_path in found_files:
+            # print(f"  提交任务: {os.path.basename(image_file_path)}") # 可以在提交时打印
+            future = executor.submit(
+                process_image_to_ascii_themes, # 要执行的函数
+                image_file_path,              # 函数参数
+                font,
+                themes_config,
+                main_output_dir,
+                output_width_chars
+            )
+            futures[future] = image_file_path # 映射 Future 到文件名
+
+        # --- 等待任务完成并收集结果 ---
+        processed_count = 0
+        for future in concurrent.futures.as_completed(futures):
+            image_path = futures[future]
+            image_basename = os.path.basename(image_path)
+            processed_count += 1
+            try:
+                # 获取子进程返回的结果
+                image_results = future.result()
+                overall_results['total_success'] += image_results.get('success', 0)
+                overall_results['total_failed'] += image_results.get('failed', 0)
+                # 可以在主进程中打印每个文件完成的消息
+                print(f"  [主进程] {processed_count}/{num_files}: 处理完成 '{image_basename}' (结果: 成功={image_results.get('success', 0)}, 失败={image_results.get('failed', 0)})")
+
+            except Exception as exc:
+                # 如果子进程中发生未捕获的异常，会在这里抛出
+                print(f"  [主进程] {processed_count}/{num_files}: 处理图像 '{image_basename}' 时产生异常: {exc}")
+                # 将此图像的所有主题计为失败
+                overall_results['total_failed'] += len(THEMES_TO_GENERATE)
+                # 可以选择性地打印更详细的错误
+                # traceback.print_exc()
+
+    finally:
+        print("所有任务已提交，正在等待完成...")
+        executor.shutdown(wait=True) # 等待所有任务完成并关闭池
+        print("进程池已关闭。")
+
+    end_dir_processing_time = time.perf_counter()
+    print(f"目录 '{dir_path}' 处理耗时: {end_dir_processing_time - start_dir_processing_time:.4f} 秒")
 
     return overall_results
+# ==============================================================================
+# *** process_directory 函数修改结束 ***
+# ==============================================================================
+
 
 # --- 输入和摘要函数 (无变化) ---
 def get_input_path():
@@ -596,7 +662,7 @@ def get_input_path():
 def print_summary(results, duration):
     """打印最终的处理摘要。"""
     print("\n===================================")
-    print("           处理摘要")
+    print("            处理摘要")
     print("===================================")
     input_type = results.get('input_type', 'unknown')
     output_location = results.get('output_location')
@@ -609,6 +675,8 @@ def print_summary(results, duration):
         font_path_tried = results.get('font_path_tried', '未知')
         print(f"  尝试加载字体: '{font_name}'")
         print(f"  尝试路径: {font_path_tried}")
+    elif input_type == 'runtime_error':
+         print("状态：失败（发生运行时错误）")
     elif input_type == 'file':
         success_count = results.get('total_success', 0)
         fail_count = results.get('total_failed', 0)
@@ -625,8 +693,8 @@ def print_summary(results, duration):
         fail_count = results.get('total_failed', 0)
         print(f"输入类型：目录")
         print(f"找到/尝试处理的图像文件数：{processed_files}")
-        print(f"成功生成的 PNG 总数：{success_count}")
-        print(f"失败/跳过的主题尝试总数：{fail_count}")
+        print(f"成功生成的 PNG 总数（跨所有文件和主题）：{success_count}")
+        print(f"失败/跳过的主题尝试总数（跨所有文件）：{fail_count}")
         if output_location:
             print(f"主输出目录：{output_location}")
             print(f" (每个图像的结果保存在其对应的子目录中)")
@@ -693,34 +761,37 @@ def main():
             print("未提供输入路径或操作已取消。退出。")
             sys.exit(0)
 
-        processing_start_time = time.perf_counter()
+        processing_start_time = time.perf_counter() # 记录实际处理开始时间
 
         if os.path.isfile(input_path):
             results['input_type'] = 'file'
             file_dir = os.path.dirname(os.path.abspath(input_path))
             file_name_no_ext, _ = os.path.splitext(os.path.basename(input_path))
+            # 单文件输出目录结构保持不变
             base_output_dir = os.path.join(file_dir, f"{file_name_no_ext}_ascii_art_{output_width_chars}w")
-            results['output_location'] = os.path.join(base_output_dir, file_name_no_ext)
-
+            # 在这里我们仍然调用原始函数，因为并行主要针对目录处理
             img_results = process_image_to_ascii_themes(
                 input_path,
                 font,
                 COLOR_THEMES,
-                base_output_dir,
+                base_output_dir, # 这个目录会被 process_image... 内部创建
                 output_width_chars
             )
             results['total_success'] = img_results['success']
             results['total_failed'] = img_results['failed']
+            # 设置 output_location 用于摘要
+            results['output_location'] = os.path.join(base_output_dir, file_name_no_ext)
 
         elif os.path.isdir(input_path):
             results['input_type'] = 'directory'
+            # 调用修改后的、使用进程池的目录处理函数
             dir_results = process_directory(
                 input_path,
                 font,
                 COLOR_THEMES,
                 output_width_chars
              )
-            results.update(dir_results)
+            results.update(dir_results) # 合并目录处理的结果
 
         else:
             print(f"错误：输入路径 '{input_path}' 不是有效的文件或目录。")
@@ -728,7 +799,7 @@ def main():
 
         processing_end_time = time.perf_counter()
         total_processing_duration = processing_end_time - processing_start_time
-        print_summary(results, total_processing_duration)
+        print_summary(results, total_processing_duration) # 传递实际处理时间
 
     except Exception as e:
         print("\n--- 发生未处理的异常 ---")
@@ -742,8 +813,9 @@ def main():
         print_summary(results, duration)
         sys.exit(1)
 
-# --- 主程序入口保持不变 ---
+# --- 主程序入口 (确保在 __main__ 下) ---
 if __name__ == "__main__":
+    # 这段代码对于多进程打包应用（如使用 PyInstaller）很重要
     if getattr(sys, 'frozen', False):
         application_path = os.path.dirname(sys.executable)
         try:
@@ -751,6 +823,9 @@ if __name__ == "__main__":
             print(f"检测到打包环境，当前目录已设置为: {application_path}")
         except Exception as cd_err:
              print(f"警告：无法切换目录到 {application_path}: {cd_err}")
+
+    # 确保在 Windows 等平台上多进程正常工作
+    multiprocessing.freeze_support() # <--- 新增：支持冻结环境下的多进程
 
     main()
 
