@@ -1,13 +1,14 @@
 # -*- coding: utf-8 -*-
 import os
 import sys
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, ImageFilter
 import math
 import traceback
 import time
 import configparser # 导入配置解析器
 import concurrent.futures # <--- 新增：用于并行处理
 import multiprocessing # <--- 新增：获取 CPU 核心数
+import shutil # <--- 新增：用于文件复制
 
 # --- 默认配置 (如果 config.txt 不存在或无效则使用) ---
 DEFAULT_OUTPUT_WIDTH_CHARS = 128 # 默认 ASCII 表示宽度
@@ -35,8 +36,8 @@ THEMES_TO_GENERATE = [
     # "dark",
     # "green_term",
     #"original_dark_bg",
-    "original_light_bg",
-    "light",
+    #"original_light_bg",#彩色字体
+    "light",#黑色字体灰色背景
     # "amber_term",
 ]
 
@@ -47,93 +48,161 @@ def load_config(config_filepath):
     如果文件不存在、键缺失或值无效，则使用默认值。
     返回包含配置值的字典。
     """
+    # --- [Settings] 部分的默认值 ---
     config_values = {
         "output_width_chars": DEFAULT_OUTPUT_WIDTH_CHARS,
         "font_filename": DEFAULT_FONT_FILENAME,
         "font_size": DEFAULT_FONT_SIZE,
+        # --- 新增 [Filter] 部分的默认值 ---
+        "enable_filter": False,
+        "filter_type": "gaussian",
+        "filter_gaussian_radius": 1.0,
+        "filter_median_size": 3,
     }
     print(f"尝试从以下路径加载配置文件: {config_filepath}")
     if not os.path.exists(config_filepath):
         print("未找到 config.ini。将使用默认设置。")
-        print(f"  默认 OUTPUT_WIDTH_CHARS = {DEFAULT_OUTPUT_WIDTH_CHARS}")
-        print(f"  默认 FONT_FILENAME = {DEFAULT_FONT_FILENAME}")
-        print(f"  默认 FONT_SIZE = {DEFAULT_FONT_SIZE}")
+        # 打印所有默认值，包括滤波器的
+        print(f"  默认 OUTPUT_WIDTH_CHARS = {config_values['output_width_chars']}")
+        print(f"  默认 FONT_FILENAME = {config_values['font_filename']}")
+        print(f"  默认 FONT_SIZE = {config_values['font_size']}")
+        print(f"  默认 ENABLE_FILTER = {config_values['enable_filter']}")
+        print(f"  默认 FILTER_TYPE = {config_values['filter_type']}")
+        print(f"  默认 FILTER_GAUSSIAN_RADIUS = {config_values['filter_gaussian_radius']}")
+        print(f"  默认 FILTER_MEDIAN_SIZE = {config_values['filter_median_size']}")
         return config_values
 
-    parser = configparser.ConfigParser(allow_no_value=True)
+    parser = configparser.ConfigParser(allow_no_value=True, inline_comment_prefixes=('#', ';'))
     try:
         parser.read(config_filepath, encoding='utf-8')
         print("已找到 config.ini。正在加载设置...")
 
+        # --- 加载 [Settings] 部分 (代码不变) ---
         if 'Settings' in parser:
             settings_section = parser['Settings']
-
+            # (加载 OUTPUT_WIDTH_CHARS, FONT_FILENAME, FONT_SIZE 的代码保持不变)
+            # ... (此处省略未改变的 Settings 加载代码) ...
             # 加载 OUTPUT_WIDTH_CHARS
             try:
-                loaded_width = settings_section.getint('OUTPUT_WIDTH_CHARS', fallback=DEFAULT_OUTPUT_WIDTH_CHARS)
-                if loaded_width > 0:
-                    config_values["output_width_chars"] = loaded_width
-                    print(f"  已加载 OUTPUT_WIDTH_CHARS = {config_values['output_width_chars']}")
-                else:
-                    print(f"  警告: config.ini 中的 OUTPUT_WIDTH_CHARS 值 ({loaded_width}) 无效 (必须 > 0)。使用默认值 {DEFAULT_OUTPUT_WIDTH_CHARS}。")
-                    config_values["output_width_chars"] = DEFAULT_OUTPUT_WIDTH_CHARS
+                 loaded_width = settings_section.getint('OUTPUT_WIDTH_CHARS', fallback=config_values['output_width_chars'])
+                 if loaded_width > 0:
+                     config_values["output_width_chars"] = loaded_width
+                     print(f"  已加载 OUTPUT_WIDTH_CHARS = {config_values['output_width_chars']}")
+                 else:
+                     print(f"  警告: config.ini 中的 OUTPUT_WIDTH_CHARS 值 ({loaded_width}) 无效 (必须 > 0)。使用默认值 {config_values['output_width_chars']}。")
             except ValueError:
-                print(f"  警告: config.ini 中的 OUTPUT_WIDTH_CHARS 值不是有效的整数。使用默认值 {DEFAULT_OUTPUT_WIDTH_CHARS}。")
-                config_values["output_width_chars"] = DEFAULT_OUTPUT_WIDTH_CHARS
+                 print(f"  警告: config.ini 中的 OUTPUT_WIDTH_CHARS 值不是有效的整数。使用默认值 {config_values['output_width_chars']}。")
             except KeyError:
-                print(f"  信息: config.ini 中未找到 OUTPUT_WIDTH_CHARS。使用默认值 {DEFAULT_OUTPUT_WIDTH_CHARS}。")
-                config_values["output_width_chars"] = DEFAULT_OUTPUT_WIDTH_CHARS
+                 print(f"  信息: config.ini 中未找到 OUTPUT_WIDTH_CHARS。使用默认值 {config_values['output_width_chars']}。")
 
             # 加载 FONT_FILENAME (字符串)
             try:
-                loaded_filename = settings_section.get('FONT_FILENAME', fallback=DEFAULT_FONT_FILENAME).strip()
-                if loaded_filename:
-                    config_values["font_filename"] = loaded_filename
-                    print(f"  已加载 FONT_FILENAME = {config_values['font_filename']}")
-                else:
-                    print(f"  警告: config.ini 中的 FONT_FILENAME 为空。使用默认值 {DEFAULT_FONT_FILENAME}。")
-                    config_values["font_filename"] = DEFAULT_FONT_FILENAME
+                 loaded_filename = settings_section.get('FONT_FILENAME', fallback=config_values['font_filename']).strip()
+                 if loaded_filename:
+                     config_values["font_filename"] = loaded_filename
+                     print(f"  已加载 FONT_FILENAME = {config_values['font_filename']}")
+                 else:
+                     print(f"  警告: config.ini 中的 FONT_FILENAME 为空。使用默认值 {config_values['font_filename']}。")
             except KeyError:
-                print(f"  信息: config.ini 中未找到 FONT_FILENAME。使用默认值 {DEFAULT_FONT_FILENAME}。")
-                config_values["font_filename"] = DEFAULT_FONT_FILENAME
+                 print(f"  信息: config.ini 中未找到 FONT_FILENAME。使用默认值 {config_values['font_filename']}。")
 
             # 加载 FONT_SIZE
             try:
-                loaded_size = settings_section.getint('FONT_SIZE', fallback=DEFAULT_FONT_SIZE)
-                if loaded_size > 0:
-                    config_values["font_size"] = loaded_size
-                    print(f"  已加载 FONT_SIZE = {config_values['font_size']}")
-                else:
-                    print(f"  警告: config.ini 中的 FONT_SIZE 值 ({loaded_size}) 无效 (必须 > 0)。使用默认值 {DEFAULT_FONT_SIZE}。")
-                    config_values["font_size"] = DEFAULT_FONT_SIZE
+                 loaded_size = settings_section.getint('FONT_SIZE', fallback=config_values['font_size'])
+                 if loaded_size > 0:
+                     config_values["font_size"] = loaded_size
+                     print(f"  已加载 FONT_SIZE = {config_values['font_size']}")
+                 else:
+                     print(f"  警告: config.ini 中的 FONT_SIZE 值 ({loaded_size}) 无效 (必须 > 0)。使用默认值 {config_values['font_size']}。")
             except ValueError:
-                print(f"  警告: config.ini 中的 FONT_SIZE 值不是有效的整数。使用默认值 {DEFAULT_FONT_SIZE}。")
-                config_values["font_size"] = DEFAULT_FONT_SIZE
+                 print(f"  警告: config.ini 中的 FONT_SIZE 值不是有效的整数。使用默认值 {config_values['font_size']}。")
             except KeyError:
-                print(f"  信息: config.ini 中未找到 FONT_SIZE。使用默认值 {DEFAULT_FONT_SIZE}。")
-                config_values["font_size"] = DEFAULT_FONT_SIZE
+                 print(f"  信息: config.ini 中未找到 FONT_SIZE。使用默认值 {config_values['font_size']}。")
 
         else:
             print("警告: 在 config.ini 中未找到 [Settings] 部分。将使用所有默认设置。")
-            config_values = { # Re-assign defaults explicitly
-                "output_width_chars": DEFAULT_OUTPUT_WIDTH_CHARS,
-                "font_filename": DEFAULT_FONT_FILENAME,
-                "font_size": DEFAULT_FONT_SIZE,
-            }
+            # 如果连 Settings 都没有，Filter 也不需要单独加载，会使用字典的默认值
+
+        # --- 新增：加载 [Filter] 部分 ---
+        if 'Filter' in parser:
+            filter_section = parser['Filter']
+            print("  正在加载 [Filter] 设置...")
+
+            # 加载 ENABLE_FILTER
+            try:
+                config_values['enable_filter'] = filter_section.getboolean('ENABLE_FILTER', fallback=config_values['enable_filter'])
+                print(f"    已加载 ENABLE_FILTER = {config_values['enable_filter']}")
+            except ValueError:
+                print(f"    警告: config.ini 中的 ENABLE_FILTER 值不是有效的布尔值 (True/False)。使用默认值 {config_values['enable_filter']}。")
+            except KeyError:
+                 print(f"    信息: config.ini 中未找到 ENABLE_FILTER。使用默认值 {config_values['enable_filter']}。")
+
+
+            # 加载 FILTER_TYPE
+            try:
+                loaded_type = filter_section.get('FILTER_TYPE', fallback=config_values['filter_type']).lower().strip()
+                if loaded_type in ['gaussian', 'median']:
+                    config_values['filter_type'] = loaded_type
+                    print(f"    已加载 FILTER_TYPE = {config_values['filter_type']}")
+                else:
+                    print(f"    警告: config.ini 中的 FILTER_TYPE 值 '{loaded_type}' 无效 (应为 'gaussian' 或 'median')。使用默认值 '{config_values['filter_type']}'。")
+            except KeyError:
+                print(f"    信息: config.ini 中未找到 FILTER_TYPE。使用默认值 '{config_values['filter_type']}'。")
+
+            # 加载 FILTER_GAUSSIAN_RADIUS
+            try:
+                loaded_radius = filter_section.getfloat('FILTER_GAUSSIAN_RADIUS', fallback=config_values['filter_gaussian_radius'])
+                if loaded_radius > 0:
+                     config_values['filter_gaussian_radius'] = loaded_radius
+                     print(f"    已加载 FILTER_GAUSSIAN_RADIUS = {config_values['filter_gaussian_radius']}")
+                else:
+                     print(f"    警告: config.ini 中的 FILTER_GAUSSIAN_RADIUS 值 ({loaded_radius}) 无效 (必须 > 0)。使用默认值 {config_values['filter_gaussian_radius']}。")
+            except ValueError:
+                print(f"    警告: config.ini 中的 FILTER_GAUSSIAN_RADIUS 值不是有效的浮点数。使用默认值 {config_values['filter_gaussian_radius']}。")
+            except KeyError:
+                print(f"    信息: config.ini 中未找到 FILTER_GAUSSIAN_RADIUS。使用默认值 {config_values['filter_gaussian_radius']}。")
+
+
+            # 加载 FILTER_MEDIAN_SIZE
+            try:
+                loaded_median_size = filter_section.getint('FILTER_MEDIAN_SIZE', fallback=config_values['filter_median_size'])
+                if loaded_median_size >= 3 and loaded_median_size % 2 != 0:
+                    config_values['filter_median_size'] = loaded_median_size
+                    print(f"    已加载 FILTER_MEDIAN_SIZE = {config_values['filter_median_size']}")
+                else:
+                    print(f"    警告: config.ini 中的 FILTER_MEDIAN_SIZE 值 ({loaded_median_size}) 无效 (必须是 >= 3 的奇数)。使用默认值 {config_values['filter_median_size']}。")
+            except ValueError:
+                print(f"    警告: config.ini 中的 FILTER_MEDIAN_SIZE 值不是有效的整数。使用默认值 {config_values['filter_median_size']}。")
+            except KeyError:
+                print(f"    信息: config.ini 中未找到 FILTER_MEDIAN_SIZE。使用默认值 {config_values['filter_median_size']}。")
+
+        else:
+             print("信息: 在 config.ini 中未找到 [Filter] 部分。将使用默认滤波设置 (关闭)。")
+             # 不需要额外操作，config_values 已包含默认滤波设置
 
     except configparser.Error as e:
         print(f"错误: 读取 config.ini 时出错: {e}。将使用所有默认设置。")
-        config_values = { # Re-assign defaults explicitly
+        # 重置为所有默认值
+        config_values = {
             "output_width_chars": DEFAULT_OUTPUT_WIDTH_CHARS,
             "font_filename": DEFAULT_FONT_FILENAME,
             "font_size": DEFAULT_FONT_SIZE,
+            "enable_filter": False,
+            "filter_type": "gaussian",
+            "filter_gaussian_radius": 1.0,
+            "filter_median_size": 3,
         }
     except Exception as e:
         print(f"错误: 处理 config.ini 时发生意外错误: {e}。将使用所有默认设置。")
-        config_values = { # Re-assign defaults explicitly
+        # 重置为所有默认值
+        config_values = {
             "output_width_chars": DEFAULT_OUTPUT_WIDTH_CHARS,
             "font_filename": DEFAULT_FONT_FILENAME,
             "font_size": DEFAULT_FONT_SIZE,
+            "enable_filter": False,
+            "filter_type": "gaussian",
+            "filter_gaussian_radius": 1.0,
+            "filter_median_size": 3,
         }
 
     print("配置加载完成。\n")
@@ -425,11 +494,12 @@ def create_ascii_png(ascii_char_color_data, # 新参数：包含字符和颜色�
 # ==============================================================================
 # *** 修改后的 process_image_to_ascii_themes 函数 ***
 # ==============================================================================
-# 修改签名，接收 font_info 而不是 font
-def process_image_to_ascii_themes(image_path, font_info, themes_config, base_output_dir, output_width_chars):
+# 修改签名，接收 filter_settings
+def process_image_to_ascii_themes(image_path, font_info, themes_config, base_output_dir, output_width_chars, filter_settings): # <-- 新增 filter_settings
     """
     处理单个图像文件，将其所有主题输出保存在 base_output_dir 下以图像名命名的子目录中。
     此函数在单独的进程中执行，并在开始时加载字体。
+    根据 filter_settings 对加载的图像应用滤波器。
     返回一个字典，包含成功和失败的主题数量。
     """
     process_id = os.getpid()
@@ -437,14 +507,12 @@ def process_image_to_ascii_themes(image_path, font_info, themes_config, base_out
     results = {'success': 0, 'failed': 0}
     font = None # <-- 在子进程中初始化
 
-    # --- 在子进程开始时加载字体 ---
+    # --- 在子进程开始时加载字体 (代码不变) ---
     try:
         font_type = font_info.get('type')
         if font_type == 'truetype':
-            # print(f"[PID:{process_id}] Loading TrueType font: {font_info['path']} size {font_info['size']}")
             font = ImageFont.truetype(font_info['path'], font_info['size'])
         elif font_type == 'default':
-            # print(f"[PID:{process_id}] Loading default font.")
             font = ImageFont.load_default()
         else:
             print(f"[PID:{process_id}] 错误: 无效的 font_info 类型 '{font_type}'。回退到默认字体。")
@@ -455,11 +523,10 @@ def process_image_to_ascii_themes(image_path, font_info, themes_config, base_out
             font = ImageFont.load_default()
         except Exception as e_load_default_worker:
             print(f"[PID:{process_id}] 致命错误: 连默认字体都无法在工作进程中加载: {e_load_default_worker}")
-            # 如果连默认字体都加载失败，标记所有主题为失败并返回
             results['failed'] = len(THEMES_TO_GENERATE)
             return results
 
-    # --- 接下来的处理逻辑基本不变，只是使用这里加载的 font 对象 ---
+    # --- 处理逻辑 ---
     original_img = None
     original_dimensions = (0, 0)
 
@@ -474,20 +541,48 @@ def process_image_to_ascii_themes(image_path, font_info, themes_config, base_out
         results['failed'] = len(THEMES_TO_GENERATE)
         return results
 
+    img_to_process = None # 用于存储可能被滤波处理后的图像
     try:
         with Image.open(image_path) as img_opened:
-            original_img = img_opened.convert('RGB')
+            original_img = img_opened.copy() # 复制一份，避免修改原始对象（如果后续需要）
             original_dimensions = original_img.size
-        if not original_img: raise ValueError("无法加载或转换图像。")
+            img_to_process = original_img.convert('RGB') # 转换为RGB用于处理
+
+        if not img_to_process: raise ValueError("无法加载或转换图像。")
+
+        # --- 新增：应用滤波器 ---
+        apply_filter = filter_settings.get('enable_filter', False)
+        if apply_filter:
+            filter_type = filter_settings.get('filter_type', 'gaussian')
+            gaussian_radius = filter_settings.get('filter_gaussian_radius', 1.0)
+            median_size = filter_settings.get('filter_median_size', 3)
+            print(f"[PID:{process_id}] 文件 '{short_image_name}': 启用滤波器。") # 提示滤波已启用
+            try:
+                filter_start_time = time.perf_counter()
+                if filter_type == 'gaussian':
+                    print(f"  应用高斯模糊 (半径={gaussian_radius})...")
+                    img_to_process = img_to_process.filter(ImageFilter.GaussianBlur(radius=gaussian_radius))
+                elif filter_type == 'median':
+                     # 确保 size 合法 (虽然 load_config 已做检查，双重保险)
+                     median_size = median_size if median_size >= 3 and median_size % 2 != 0 else 3
+                     print(f"  应用中值滤波 (尺寸={median_size})...")
+                     img_to_process = img_to_process.filter(ImageFilter.MedianFilter(size=median_size))
+                filter_end_time = time.perf_counter()
+                # print(f"  滤波耗时: {filter_end_time - filter_start_time:.4f} 秒") # 可选：打印滤波耗时
+            except Exception as filter_err:
+                 print(f"  警告: 应用滤波器 ({filter_type}) 失败: {filter_err}。将使用原始图像进行转换。")
+                 img_to_process = original_img.convert('RGB') # 确保回退到原始RGB图像
+
     except FileNotFoundError:
         print(f"[PID:{process_id}] 错误: 未找到图像文件 '{image_path}'。跳过。")
         results['failed'] = len(THEMES_TO_GENERATE)
         return results
     except Exception as e:
-        print(f"[PID:{process_id}] 打开/转换图像 '{short_image_name}' 时出错: {e}")
+        print(f"[PID:{process_id}] 打开/转换/滤波图像 '{short_image_name}' 时出错: {e}")
         results['failed'] = len(THEMES_TO_GENERATE)
         return results
 
+    # --- 后续处理使用 img_to_process (可能已滤波) ---
     for theme_name in THEMES_TO_GENERATE:
         theme_details = themes_config.get(theme_name)
         if not theme_details:
@@ -498,14 +593,22 @@ def process_image_to_ascii_themes(image_path, font_info, themes_config, base_out
         bg_color = theme_details["background"]
         fg_color = theme_details.get("foreground")
 
-        ascii_char_color_data = image_to_ascii(original_img, output_width_chars, theme_name)
+        # --- 调用 image_to_ascii 时传入处理过的图像 ---
+        ascii_char_color_data = image_to_ascii(img_to_process, output_width_chars, theme_name) # <--- 使用 img_to_process
         if not ascii_char_color_data:
             print(f"[PID:{process_id}] 错误: 为主题 '{theme_name}' 生成 ASCII 数据失败。")
             results['failed'] += 1
             continue
 
+        # 添加滤波信息到输出文件名 (可选)
+        filter_suffix = ""
+        if apply_filter:
+             filter_suffix = f"_filter-{filter_settings.get('filter_type','na')}" # 例如 _filter-gaussian
+             # 可以更详细，例如 _filter-gaussian1.0 或 _filter-median3
+
         resize_suffix = "_resized" if RESIZE_OUTPUT else ""
-        output_filename = f"{file_name_no_ext}_ascii_{theme_name}_{output_width_chars}w{resize_suffix}.png"
+        # 将滤波后缀放在宽度后面，主题前面
+        output_filename = f"{file_name_no_ext}_ascii_{output_width_chars}w{filter_suffix}_{theme_name}{resize_suffix}.png"
         output_filepath = os.path.join(image_specific_output_dir, output_filename)
 
         # 使用在子进程中加载的 font 对象
@@ -520,18 +623,18 @@ def process_image_to_ascii_themes(image_path, font_info, themes_config, base_out
             results['failed'] += 1
             print(f"[PID:{process_id}] 错误: 为主题 '{theme_name}' 创建 PNG 失败。")
 
-    # 不再打印每个进程的完成消息，让主进程打印
-    # print(f"[PID:{process_id}] 完成图像 {short_image_name}")
     return results
 
 # ==============================================================================
 # *** 修改后的 process_directory 函数 ***
 # ==============================================================================
-# 修改签名，接收 font_info 而不是 font
-def process_directory(dir_path, font_info, themes_config, output_width_chars):
+# 修改签名，接收 filter_settings 和 config_filepath
+def process_directory(dir_path, font_info, themes_config, output_width_chars, filter_settings, config_filepath): # <-- 新增 config_filepath
     """
     扫描目录，使用进程池并行处理所有支持的图像。
-    传递 font_info 给子进程。
+    传递 font_info 和 filter_settings 给子进程。
+    在主输出目录创建后，复制 config.ini。
+    目录名包含滤波器信息。
     """
     print(f"\n正在处理目录: {dir_path}")
     overall_results = {'processed_files': 0, 'total_success': 0, 'total_failed': 0, 'output_location': None}
@@ -539,28 +642,53 @@ def process_directory(dir_path, font_info, themes_config, output_width_chars):
 
     dir_name = os.path.basename(os.path.normpath(dir_path))
     parent_dir = os.path.dirname(os.path.abspath(dir_path))
-    # --- 修正输出目录名 ---
-    main_output_dir = os.path.join(parent_dir, f"{dir_name}_ascii_art_{output_width_chars}w") #<-- 修正: 确保 'w' 在这里
+
+    # --- 新增：确定滤波器标识用于文件夹命名 ---
+    filter_tag = "nofilter"
+    if filter_settings.get("enable_filter", False):
+        filter_type = filter_settings.get("filter_type", "gaussian")
+        if filter_type == 'gaussian':
+            filter_tag = 'gaussian'
+        elif filter_type == 'median':
+            filter_tag = 'median'
+        # 如果有其他类型可以继续 elif
+
+    # --- 修改：主输出目录名包含宽度和滤波器类型 ---
+    main_output_dir = os.path.join(parent_dir, f"{dir_name}_ascii_art_{output_width_chars}w_{filter_tag}") # <-- 修改命名
     overall_results['output_location'] = main_output_dir
 
     try:
         os.makedirs(main_output_dir, exist_ok=True)
         print(f"主输出目录: {main_output_dir}")
+
+        # --- 新增：复制配置文件 ---
+        if os.path.exists(config_filepath):
+            try:
+                dest_config_path = os.path.join(main_output_dir, "config_used.txt")
+                shutil.copy2(config_filepath, dest_config_path) # copy2 尝试保留元数据
+                print(f"  已将配置文件复制到: {dest_config_path}")
+            except Exception as copy_err:
+                print(f"  警告：复制配置文件 '{config_filepath}' 到输出目录失败: {copy_err}")
+        else:
+             print(f"  警告：未找到原始配置文件 '{config_filepath}'，无法复制。")
+
     except OSError as e:
         print(f"错误：无法创建主输出目录 '{main_output_dir}': {e}。")
-        overall_results['total_failed'] = 1
-        return overall_results
+        overall_results['total_failed'] = 1 # 标记失败，因为无法创建输出目录
+        return overall_results # 提前返回
 
+    # --- 后续扫描和处理逻辑不变 ---
     print("正在扫描支持的图像文件...")
     found_files = []
+    # ... (扫描文件代码不变) ...
     try:
         for entry in os.scandir(dir_path):
-            if entry.is_file() and entry.name.lower().endswith(SUPPORTED_IMAGE_EXTENSIONS):
+             if entry.is_file() and entry.name.lower().endswith(SUPPORTED_IMAGE_EXTENSIONS):
                 found_files.append(entry.path)
     except Exception as e:
-        print(f"扫描目录 '{dir_path}' 时出错: {e}")
-        overall_results['total_failed'] = 1
-        return overall_results
+         print(f"扫描目录 '{dir_path}' 时出错: {e}")
+         overall_results['total_failed'] = 1
+         return overall_results
 
     if not found_files:
         print("在目录中未找到支持的图像文件。")
@@ -572,16 +700,18 @@ def process_directory(dir_path, font_info, themes_config, output_width_chars):
 
     max_workers = None
     futures = {}
+    # 使用 try...finally 确保 executor 被关闭
     executor = concurrent.futures.ProcessPoolExecutor(max_workers=max_workers)
     try:
         for image_file_path in found_files:
             future = executor.submit(
                 process_image_to_ascii_themes, # Target function
-                image_file_path,           # Args...
-                font_info,                 # <-- 传递 font_info
+                image_file_path,               # Args...
+                font_info,                     # <-- 传递 font_info
                 themes_config,
-                main_output_dir,
-                output_width_chars
+                main_output_dir,               # <-- 使用新的目录名
+                output_width_chars,
+                filter_settings                # <-- 传递 filter_settings
             )
             futures[future] = image_file_path
 
@@ -595,28 +725,25 @@ def process_directory(dir_path, font_info, themes_config, output_width_chars):
                 image_results = future.result()
                 overall_results['total_success'] += image_results.get('success', 0)
                 overall_results['total_failed'] += image_results.get('failed', 0)
-                success_msg = f"成功={image_results.get('success', 0)}"
-                failed_msg = f"失败={image_results.get('failed', 0)}"
-                print(f"  [进度 {processed_count}/{num_files}] 处理完成: '{image_basename}' ({success_msg}, {failed_msg})")
-            except Exception as exc: # Catch exceptions from worker process OR during result retrieval
+                print(f"  [进度 {processed_count}/{num_files}] 处理完成: '{image_basename}'")
+            except Exception as exc:
                  print(f"  [进度 {processed_count}/{num_files}] 处理图像 '{image_basename}' 时主进程捕获到异常: {exc}")
-                 # traceback.print_exc() # Optionally print traceback from the main process perspective
-                 overall_results['total_failed'] += len(THEMES_TO_GENERATE) # Assume all themes failed for this image
+                 overall_results['total_failed'] += len(THEMES_TO_GENERATE)
         print("--- 所有文件处理任务已完成 ---")
 
     finally:
+        print("正在关闭进程池...")
         executor.shutdown(wait=True)
+        print("进程池已关闭。")
+
 
     end_dir_processing_time = time.perf_counter()
     print(f"目录 '{dir_path}' 处理总耗时: {end_dir_processing_time - start_dir_processing_time:.4f} 秒")
 
     return overall_results
-# ==============================================================================
-# *** process_directory 函数修改结束 ***
-# ==============================================================================
 
 
-# --- 输入和摘要函数 (无变化) ---
+# --- 输入和摘要函数  ---
 def get_input_path():
     """获取用户的输入路径（文件或目录）。"""
     input_path = ""
@@ -686,78 +813,111 @@ def print_summary(results, duration):
 # ==============================================================================
 # *** 修改后的 main 函数 ***
 # ==============================================================================
+# ==============================================================================
+# *** 修改后的 main 函数 ***
+# ==============================================================================
+# ==============================================================================
+# *** 修改后的 main 函数 ***
+# ==============================================================================
 def main():
     """主执行函数。"""
     print("--- ASCII 艺术生成器 ---")
     results = {'input_type': 'unknown'}
     start_time = time.perf_counter()
-    font_info = None # <-- 用于存储字体加载信息
+    font_info = None
 
     try:
         script_dir = os.path.dirname(os.path.abspath(__file__))
         config_filename = "config.ini"
-        config_filepath = os.path.join(script_dir, config_filename)
+        config_filepath = os.path.join(script_dir, config_filename) # 获取 config.ini 的完整路径
 
+        # --- 加载配置 (现在包含滤波设置) ---
         config = load_config(config_filepath)
         output_width_chars = config["output_width_chars"]
         font_filename = config["font_filename"]
         font_size = config["font_size"]
+        # --- 提取滤波设置 ---
+        filter_settings = {
+            "enable_filter": config.get("enable_filter", False),
+            "filter_type": config.get("filter_type", "gaussian"),
+            "filter_gaussian_radius": config.get("filter_gaussian_radius", 1.0),
+            "filter_median_size": config.get("filter_median_size", 3),
+        }
+
+        # --- 新增：确定滤波器标识用于文件夹命名 ---
+        filter_tag = "nofilter"
+        if filter_settings["enable_filter"]:
+            filter_type = filter_settings["filter_type"]
+            if filter_type == 'gaussian':
+                filter_tag = 'gaussian'
+            elif filter_type == 'median':
+                filter_tag = 'median'
+
+        # 打印应用的滤波设置（如果启用）
+        if filter_settings["enable_filter"]:
+             print(f"图像预处理滤波器已启用: 类型={filter_settings['filter_type']} (标识: {filter_tag})") # 加入标识符
+             if filter_settings['filter_type'] == 'gaussian':
+                 print(f"  高斯模糊半径: {filter_settings['filter_gaussian_radius']}")
+             elif filter_settings['filter_type'] == 'median':
+                 print(f"  中值滤波尺寸: {filter_settings['filter_median_size']}")
+        else:
+             print(f"图像预处理滤波器已禁用 (标识: {filter_tag})。") # 加入标识符
+        print("-" * 20) # 分隔线
+
 
         print("检查字体设置...")
+        # --- 字体加载逻辑 (代码不变) ---
+        # ... (此处省略未改变的字体加载逻辑) ...
         preferred_font_loaded = False
         local_font_path = os.path.join(script_dir, font_filename)
-
         try:
-            # 1. 尝试本地路径
-            print(f"尝试本地路径: {local_font_path} (大小: {font_size})")
-            if os.path.exists(local_font_path):
-                # 验证是否能加载 (但不存储对象)
-                _ = ImageFont.truetype(local_font_path, font_size)
-                print(f"成功验证本地字体 '{font_filename}'。")
-                font_info = {'type': 'truetype', 'path': local_font_path, 'size': font_size}
-                results['font_used'] = f"本地 '{font_filename}'"
-                results['font_size_used'] = font_size
-                preferred_font_loaded = True
+             # 1. 尝试本地路径
+             print(f"尝试本地路径: {local_font_path} (大小: {font_size})")
+             if os.path.exists(local_font_path):
+                 _ = ImageFont.truetype(local_font_path, font_size)
+                 print(f"成功验证本地字体 '{font_filename}'。")
+                 font_info = {'type': 'truetype', 'path': local_font_path, 'size': font_size}
+                 results['font_used'] = f"本地 '{font_filename}'"
+                 results['font_size_used'] = font_size
+                 preferred_font_loaded = True
 
-            # 2. 尝试系统路径
-            if not preferred_font_loaded:
-                print(f"警告: 本地未找到。尝试系统字体 '{font_filename}'...")
-                try:
-                    # 验证是否能加载 (但不存储对象)
-                    _ = ImageFont.truetype(font_filename, font_size)
-                    print(f"成功验证系统字体 '{font_filename}'。")
-                    # 对于系统字体，传递名称而不是完整路径，让子进程自己找
-                    font_info = {'type': 'truetype', 'path': font_filename, 'size': font_size}
-                    results['font_used'] = f"系统 '{font_filename}'"
-                    results['font_size_used'] = font_size
-                    preferred_font_loaded = True
-                except IOError:
-                    print(f"警告: 系统中也未找到 '{font_filename}'。将使用默认字体。")
+             # 2. 尝试系统路径
+             if not preferred_font_loaded:
+                 print(f"警告: 本地未找到。尝试系统字体 '{font_filename}'...")
+                 try:
+                     _ = ImageFont.truetype(font_filename, font_size)
+                     print(f"成功验证系统字体 '{font_filename}'。")
+                     font_info = {'type': 'truetype', 'path': font_filename, 'size': font_size}
+                     results['font_used'] = f"系统 '{font_filename}'"
+                     results['font_size_used'] = font_size
+                     preferred_font_loaded = True
+                 except IOError:
+                     print(f"警告: 系统中也未找到 '{font_filename}'。将使用默认字体。")
 
         except IOError as e:
-             print(f"警告: 验证首选字体 '{font_filename}' 时出错: {e}。将使用默认字体。")
+              print(f"警告: 验证首选字体 '{font_filename}' 时出错: {e}。将使用默认字体。")
         except Exception as e:
-             print(f"警告: 验证首选字体 '{font_filename}' 时发生意外错误: {e}。将使用默认字体。")
+              print(f"警告: 验证首选字体 '{font_filename}' 时发生意外错误: {e}。将使用默认字体。")
 
-        # 3. 如果首选字体验证失败，设置使用默认字体
+         # 3. 如果首选字体验证失败，设置使用默认字体
         if not preferred_font_loaded:
-            print("设置使用 Pillow 内置默认字体。")
-            font_info = {'type': 'default'} # 子进程将据此加载默认字体
-            results['font_used'] = "Pillow 内置默认字体"
-            # 尝试获取默认字体的大致高度用于显示
-            try:
+              print("设置使用 Pillow 内置默认字体。")
+              font_info = {'type': 'default'}
+              results['font_used'] = "Pillow 内置默认字体"
+              try:
                  temp_default_font = ImageFont.load_default()
-                 bbox = temp_default_font.getbbox("M")
+                 bbox = temp_default_font.getbbox("M") if hasattr(temp_default_font, 'getbbox') else (0,0,6,10) # Fallback size estimate
                  default_font_approx_height = bbox[3] - bbox[1]
                  results['font_size_used'] = f"~{default_font_approx_height}px (内置)"
-                 del temp_default_font # 删除临时对象
-            except Exception:
+                 del temp_default_font
+              except Exception:
                  results['font_size_used'] = "未知 (内置)"
 
-        # --- 字体信息准备完成 (font_info 非 None) ---
-        if font_info is None: # 理论上不会发生，但作为最后检查
-             print("致命错误：未能确定要使用的字体信息。")
-             sys.exit(1)
+
+        # --- 字体信息准备完成 ---
+        if font_info is None:
+            print("致命错误：未能确定要使用的字体信息。")
+            sys.exit(1)
 
         input_path = get_input_path()
         if input_path is None:
@@ -772,46 +932,60 @@ def main():
             results['input_type'] = 'file'
             file_dir = os.path.dirname(os.path.abspath(input_path))
             file_name_no_ext, _ = os.path.splitext(os.path.basename(input_path))
-            base_output_dir = os.path.join(file_dir, f"{file_name_no_ext}_ascii_art_{output_width_chars}w")
+            # --- 修改：单文件模式下 base_output_dir 的命名 ---
+            base_output_dir = os.path.join(file_dir, f"{file_name_no_ext}_ascii_art_{output_width_chars}w_{filter_tag}") # <-- 修改命名
 
-            # --- 处理单文件 (不使用多进程，直接调用并加载字体) ---
-            # print("处理单个文件...") # 可以添加提示
-            # 在单文件模式下，我们也需要在调用前加载字体
-            single_file_font = None
+            print(f"\n正在处理单个文件: {os.path.basename(input_path)}")
+            print(f"主输出目录: {base_output_dir}")
+
+            # --- 创建目录并复制配置文件 (单文件模式) ---
             try:
-                if font_info['type'] == 'truetype':
-                    single_file_font = ImageFont.truetype(font_info['path'], font_info['size'])
-                elif font_info['type'] == 'default':
-                    single_file_font = ImageFont.load_default()
-                if single_file_font is None: raise ValueError("无法加载字体用于单文件处理")
+                os.makedirs(base_output_dir, exist_ok=True)
+                # --- 新增：复制配置文件 ---
+                if os.path.exists(config_filepath):
+                    try:
+                        dest_config_path = os.path.join(base_output_dir, "config_used.txt")
+                        shutil.copy2(config_filepath, dest_config_path)
+                        print(f"  已将配置文件复制到: {dest_config_path}")
+                    except Exception as copy_err:
+                        print(f"  警告：复制配置文件 '{config_filepath}' 到输出目录失败: {copy_err}")
+                else:
+                     print(f"  警告：未找到原始配置文件 '{config_filepath}'，无法复制。")
 
-                # 创建一个临时的 font_info 副本，只包含加载好的字体对象给旧函数（如果不想改旧函数签名）
-                # 或者，更好的方式是让 process_image_to_ascii_themes 也能处理 font_info
-                # 这里我们直接调用修改过的 process_image_to_ascii_themes
+                # --- 处理单文件，传递 filter_settings ---
                 img_results = process_image_to_ascii_themes(
                     input_path,
-                    font_info, # <-- 传递 font_info，让它内部加载
+                    font_info,
                     COLOR_THEMES,
-                    base_output_dir,
-                    output_width_chars
+                    base_output_dir, # <--- 使用新的目录名
+                    output_width_chars,
+                    filter_settings # <-- 传递 filter_settings
                 )
                 results['total_success'] = img_results.get('success', 0)
                 results['total_failed'] = img_results.get('failed', 0)
+                # output_location 对于单文件是指包含该文件输出的那个子目录
                 results['output_location'] = os.path.join(base_output_dir, file_name_no_ext)
+                print(f"处理完成: '{os.path.basename(input_path)}'")
+
+            except OSError as e:
+                 print(f"错误：无法创建主输出目录 '{base_output_dir}': {e}。")
+                 results['total_failed'] = len(THEMES_TO_GENERATE) # 标记失败
 
             except Exception as single_err:
-                 print(f"处理单文件 '{input_path}' 时出错: {single_err}")
-                 results['total_failed'] = len(THEMES_TO_GENERATE)
-
+                 print(f"处理单文件 '{input_path}' 时发生顶层错误: {single_err}")
+                 traceback.print_exc() # 打印详细错误
+                 results['total_failed'] = len(THEMES_TO_GENERATE) # 假定所有主题都失败了
 
         elif os.path.isdir(input_path):
             results['input_type'] = 'directory'
-            # 调用多进程目录处理函数，传递 font_info
+            # --- 处理目录，传递 filter_settings 和 config_filepath ---
             dir_results = process_directory(
                 input_path,
-                font_info, # <-- 传递 font_info
+                font_info,
                 COLOR_THEMES,
-                output_width_chars
+                output_width_chars,
+                filter_settings, # <-- 传递 filter_settings
+                config_filepath  # <-- 新增：传递 config_filepath
              )
             results.update(dir_results)
 
@@ -821,7 +995,11 @@ def main():
 
         processing_end_time = time.perf_counter()
         total_processing_duration = processing_end_time - processing_start_time
+        # 将总时长传递给 print_summary
+        results['total_duration_incl_load'] = time.perf_counter() - start_time
+        # 使用 processing_duration 显示处理时间
         print_summary(results, total_processing_duration)
+
 
     except Exception as e:
         print("\n--- 发生未处理的全局异常 ---")
@@ -835,8 +1013,9 @@ def main():
         print_summary(results, duration)
         sys.exit(1)
 
-
+# --- 主程序入口 (确保在 __main__ 下) ---
 if __name__ == "__main__":
+    # 这段代码对于多进程打包应用（如使用 PyInstaller）很重要
     if getattr(sys, 'frozen', False):
         application_path = os.path.dirname(sys.executable)
         try:
