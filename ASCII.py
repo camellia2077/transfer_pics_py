@@ -361,18 +361,18 @@ def image_to_ascii(color_image, width_chars, active_theme_name):
 
 
 # ==============================================================================
-# *** create_ascii_png 函数 (无变化) ***
+# *** create_ascii_png 函数 ***
 # ==============================================================================
 def create_ascii_png(ascii_char_color_data, # 新参数：包含字符和颜色的数据
-                       theme_name,
-                       output_path,
-                       font, # 接收已加载字体
-                       background_color,
-                       foreground_color, # 仍然需要用于非 'original' 主题
-                       original_image_size=None):
+                     theme_name,
+                     output_path,
+                     font, # 接收已加载字体
+                     background_color,
+                     foreground_color, # 仍然需要用于非 'original' 主题
+                     original_image_size=None):
     """
     根据包含字符和采样颜色的数据创建 PNG 图像。
-    (函数体无变化)
+    优化：对于非彩色主题，按行绘制文本以提高性能。
     """
     if not ascii_char_color_data or not ascii_char_color_data[0]:
         print("错误：没有 ASCII 数据或空行来创建 PNG。")
@@ -392,7 +392,7 @@ def create_ascii_png(ascii_char_color_data, # 新参数：包含字符和颜色�
         dummy_img = Image.new('RGB', (1, 1))
         draw = ImageDraw.Draw(dummy_img)
         sample_text_height = '|M_g(`' # 尝试包含一些升部和降部字符
-        # 确保 sample_line_text 不为空
+        # 确保 sample_line_text 不为空 (代码不变)
         if not ascii_char_color_data[0]: return False # 如果第一行为空则无法继续
         sample_line_text = "".join([item[0] for item in ascii_char_color_data[0]])
         if not sample_line_text: # 如果第一行全是空字符或无法获取字符
@@ -401,13 +401,10 @@ def create_ascii_png(ascii_char_color_data, # 新参数：包含字符和颜色�
              sample_line_text = 'M' * len(ascii_char_color_data[0])
              if not sample_line_text: sample_line_text = "M" # 最终后备
 
-
-        # 使用 getbbox 获取更准确的尺寸
+        # 使用 getbbox 获取更准确的尺寸 (代码不变)
         try:
             # left, top, right, bottom
             bbox_h = draw.textbbox((0, 0), sample_text_height, font=font, anchor="lt") # 左上角对齐
-            # 使用所有字符中最高的 ascent 和 最低的 descent 可能更准确，但复杂
-            # 这里用包含升降部的字符串近似
             line_height = bbox_h[3] - bbox_h[1] if bbox_h else font_size_val # 从 bbox 获取高度
 
             bbox_w = draw.textbbox((0, 0), sample_line_text, font=font, anchor="lt")
@@ -416,7 +413,6 @@ def create_ascii_png(ascii_char_color_data, # 新参数：包含字符和颜色�
         except AttributeError: # Pillow < 9.2.0? or other issues
             print("警告：textbbox 不可用或出错。正在使用较旧的 Pillow 文本测量方法（textsize）。尺寸可能不太准确。")
             try:
-                # textsize 可能不包含字体内部的空白
                 size_h = draw.textsize(sample_text_height, font=font)
                 line_height = size_h[1]
                 size_w = draw.textsize(sample_line_text, font=font)
@@ -433,15 +429,14 @@ def create_ascii_png(ascii_char_color_data, # 新参数：包含字符和颜色�
                     line_height = font_size_val + 4
                     text_width = font_size_val * len(sample_line_text)
 
-
-        # 确保尺寸有效
+        # 确保尺寸有效 (代码不变)
         line_spacing = line_height + 2 # 增加2像素行间距
         if line_spacing <= 0: line_spacing = font_size_val + 2
         if text_width <= 0: text_width = font_size_val * len(sample_line_text) if sample_line_text else font_size_val
 
         num_rows = len(ascii_char_color_data)
         num_cols = len(ascii_char_color_data[0]) if num_rows > 0 else 0
-        # 平均字符宽度可能不准，特别是对于比例字体。但对于等宽字体尚可。
+        # 平均字符宽度可能不准，特别是对于比例字体。但对于等宽字体尚可。 (代码不变)
         avg_char_width = text_width / num_cols if num_cols > 0 else font_size_val
 
         img_width = max(1, int(math.ceil(text_width))) # 使用 ceil 确保宽度足够
@@ -451,14 +446,37 @@ def create_ascii_png(ascii_char_color_data, # 新参数：包含字符和颜色�
         draw = ImageDraw.Draw(output_image)
         y_text = 0 # 从顶部开始绘制
 
-        # 绘制文本
-        for y, row_data in enumerate(ascii_char_color_data):
-            x_pos = 0 # 每行开始时重置 x 位置
-            for x, (char, sampled_color) in enumerate(row_data):
-                final_color = None
-                if is_original_color_theme:
-                    final_color = sampled_color
-                    # 轻微调暗亮背景上的彩色字符
+        # --- 修改后的绘制文本逻辑 ---
+        if not is_original_color_theme:
+            # --- 优化：按行绘制 (用于固定前景色的主题) ---
+            final_color = None
+            if foreground_color is None:
+                # 理论上 load_config 应该确保非 original 主题有 foreground_color
+                # 但作为后备，设置一个默认值
+                print(f"警告：非原始主题 '{theme_name}' 缺少前景色。使用白色。")
+                final_color = "white"
+            else:
+                final_color = foreground_color
+
+            for y, row_data in enumerate(ascii_char_color_data):
+                # 构建当前行的完整字符串
+                line_text = "".join([item[0] for item in row_data])
+                if line_text: # 仅在行不为空时绘制
+                    try:
+                        # 对每一行调用一次 draw.text，从左上角 (0, y_text) 开始绘制
+                        draw.text((0, y_text), line_text, font=font, fill=final_color, anchor="lt")
+                    except Exception as line_err:
+                         print(f"警告：在 y={y_text} 绘制行 '{line_text[:20]}...' 时出错: {line_err}")
+                # 更新 y 位置，移动到下一行
+                y_text += line_spacing
+        else:
+            # --- 保持原始逻辑：逐字符绘制 (用于 original_dark_bg / original_light_bg) ---
+            for y, row_data in enumerate(ascii_char_color_data):
+                x_pos = 0 # 每行开始时重置 x 位置
+                for x, (char, sampled_color) in enumerate(row_data):
+                    final_color = sampled_color # 默认使用采样颜色
+
+                    # 轻微调暗亮背景上的彩色字符 (逻辑不变)
                     if theme_name == "original_light_bg":
                         darken_factor = 0.8 # 稍微调暗一点
                         try:
@@ -469,26 +487,20 @@ def create_ascii_png(ascii_char_color_data, # 新参数：包含字符和颜色�
                             final_color = (new_r, new_g, new_b)
                         except (TypeError, ValueError):
                             final_color = sampled_color # 如果颜色无效则保持原样
-                else: # 非原始颜色主题
-                    if foreground_color is None:
-                        print(f"错误：非原始主题 '{theme_name}' 缺少前景色。使用白色。")
-                        final_color = "white"
-                    else:
-                        final_color = foreground_color
 
-                # 使用 draw.text 绘制单个字符
-                try:
-                    # anchor='lt' 表示文本的左上角位于 (x_pos, y_text)
-                    draw.text((math.floor(x_pos), y_text), char, font=font, fill=final_color, anchor="lt")
-                except Exception as char_err:
-                    print(f"警告：在文本位置 ({x_pos:.0f},{y_text}) 绘制字符 '{char}' 时出错: {char_err}")
+                    # 使用 draw.text 绘制单个字符 (逻辑不变)
+                    try:
+                        # anchor='lt' 表示文本的左上角位于 (x_pos, y_text)
+                        draw.text((math.floor(x_pos), y_text), char, font=font, fill=final_color, anchor="lt")
+                    except Exception as char_err:
+                        print(f"警告：在文本位置 ({x_pos:.0f},{y_text}) 绘制字符 '{char}' 时出错: {char_err}")
 
-                # 更新 x 位置，使用平均宽度（对于等宽字体较准）
-                x_pos += avg_char_width
-            # 更新 y 位置，移动到下一行
-            y_text += line_spacing
+                    # 更新 x 位置，使用平均宽度（对于等宽字体较准）(逻辑不变)
+                    x_pos += avg_char_width
+                # 更新 y 位置，移动到下一行 (逻辑不变)
+                y_text += line_spacing
 
-        # 调整大小 (可选)
+        # 调整大小 (可选) (代码不变)
         if RESIZE_OUTPUT and original_image_size:
             original_width, original_height = original_image_size
             if original_width > 0 and original_height > 0:
@@ -501,7 +513,7 @@ def create_ascii_png(ascii_char_color_data, # 新参数：包含字符和颜色�
                     resample_filter = Image.LANCZOS # 兼容旧版 Pillow
                 try:
                     # 注意：这个 print 语句可能在子进程中执行，输出会混合
-                    # print(f"    调整 PNG 大小为 {img_width}x{target_height} 以匹配原始宽高比...")
+                    # print(f"    调整 PNG 大小为 {img_width}x{target_height} 以匹配原始宽高比...")
                     output_image = output_image.resize((img_width, target_height), resample_filter)
                 except Exception as resize_err:
                     print(f"警告: 调整大小失败: {resize_err}. 使用原始渲染大小。")
@@ -510,7 +522,7 @@ def create_ascii_png(ascii_char_color_data, # 新参数：包含字符和颜色�
         elif RESIZE_OUTPUT:
             print("警告：请求调整大小但未提供原始图像尺寸。")
 
-        # 保存图像
+        # 保存图像 (代码不变)
         output_image.save(output_path)
         return True
 
