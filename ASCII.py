@@ -422,140 +422,133 @@ def create_ascii_png(ascii_char_color_data, # 新参数：包含字符和颜色�
 # ==============================================================================
 
 
-# --- 核心处理函数 (无变化，但现在会被并行调用) ---
-def process_image_to_ascii_themes(image_path, font, themes_config, base_output_dir, output_width_chars):
+# ==============================================================================
+# *** 修改后的 process_image_to_ascii_themes 函数 ***
+# ==============================================================================
+# 修改签名，接收 font_info 而不是 font
+def process_image_to_ascii_themes(image_path, font_info, themes_config, base_output_dir, output_width_chars):
     """
     处理单个图像文件，将其所有主题输出保存在 base_output_dir 下以图像名命名的子目录中。
-    此函数现在可能在单独的进程中执行。
+    此函数在单独的进程中执行，并在开始时加载字体。
     返回一个字典，包含成功和失败的主题数量。
     """
-    # 注意：此函数内的 print 语句可能会与其他进程的输出交错
-    process_id = os.getpid() # 获取当前进程ID，方便调试
+    process_id = os.getpid()
     short_image_name = os.path.basename(image_path)
-    print(f"[PID:{process_id}] 开始处理图像: {short_image_name}")
     results = {'success': 0, 'failed': 0}
+    font = None # <-- 在子进程中初始化
+
+    # --- 在子进程开始时加载字体 ---
+    try:
+        font_type = font_info.get('type')
+        if font_type == 'truetype':
+            # print(f"[PID:{process_id}] Loading TrueType font: {font_info['path']} size {font_info['size']}")
+            font = ImageFont.truetype(font_info['path'], font_info['size'])
+        elif font_type == 'default':
+            # print(f"[PID:{process_id}] Loading default font.")
+            font = ImageFont.load_default()
+        else:
+            print(f"[PID:{process_id}] 错误: 无效的 font_info 类型 '{font_type}'。回退到默认字体。")
+            font = ImageFont.load_default() # Fallback
+    except Exception as e_load_worker:
+        print(f"[PID:{process_id}] 错误: 在工作进程中加载字体失败: {e_load_worker}。回退到默认字体。")
+        try:
+            font = ImageFont.load_default()
+        except Exception as e_load_default_worker:
+            print(f"[PID:{process_id}] 致命错误: 连默认字体都无法在工作进程中加载: {e_load_default_worker}")
+            # 如果连默认字体都加载失败，标记所有主题为失败并返回
+            results['failed'] = len(THEMES_TO_GENERATE)
+            return results
+
+    # --- 接下来的处理逻辑基本不变，只是使用这里加载的 font 对象 ---
     original_img = None
     original_dimensions = (0, 0)
 
-    # --- 获取文件名（不含扩展名）以创建子目录 ---
     base_name = os.path.basename(image_path)
     file_name_no_ext, _ = os.path.splitext(base_name)
-
-    # --- 构建并创建此图像的特定输出子目录 ---
     image_specific_output_dir = os.path.join(base_output_dir, file_name_no_ext)
-    try:
-        # 确保子目录存在（可能由主进程创建，但这里检查/创建更安全）
-        os.makedirs(image_specific_output_dir, exist_ok=True)
-        # print(f"[PID:{process_id}]   输出子目录: {image_specific_output_dir}")
-    except OSError as e:
-        print(f"[PID:{process_id}]   错误：无法为此图像创建输出子目录 '{image_specific_output_dir}': {e}。跳过此图像。")
-        results['failed'] = len(THEMES_TO_GENERATE) # 标记所有主题都失败
-        return results # <--- 返回错误结果
 
-    # --- 加载图像 ---
+    try:
+        os.makedirs(image_specific_output_dir, exist_ok=True)
+    except OSError as e:
+        print(f"[PID:{process_id}] 错误: 无法创建输出子目录 '{image_specific_output_dir}': {e}。跳过图像。")
+        results['failed'] = len(THEMES_TO_GENERATE)
+        return results
+
     try:
         with Image.open(image_path) as img_opened:
-            # 确保在处理前转换为 RGB，避免后续问题
             original_img = img_opened.convert('RGB')
             original_dimensions = original_img.size
-        if not original_img:
-            raise ValueError("无法加载或转换图像。")
-        # print(f"[PID:{process_id}]   图像已加载 ({original_dimensions[0]}x{original_dimensions[1]})")
+        if not original_img: raise ValueError("无法加载或转换图像。")
     except FileNotFoundError:
-        print(f"[PID:{process_id}]   错误：在 '{image_path}' 未找到图像文件。跳过。")
+        print(f"[PID:{process_id}] 错误: 未找到图像文件 '{image_path}'。跳过。")
         results['failed'] = len(THEMES_TO_GENERATE)
-        return results # <--- 返回错误结果
+        return results
     except Exception as e:
-        print(f"[PID:{process_id}]   打开或转换图像文件 '{os.path.basename(image_path)}' 时出错: {e}")
-        # traceback.print_exc() # 在子进程中打印可能混乱
+        print(f"[PID:{process_id}] 打开/转换图像 '{short_image_name}' 时出错: {e}")
         results['failed'] = len(THEMES_TO_GENERATE)
-        return results # <--- 返回错误结果
+        return results
 
-    # --- 处理每个主题 (按顺序，但在图像级别是并行的) ---
     for theme_name in THEMES_TO_GENERATE:
-        theme_start_time = time.perf_counter()
-        # print(f"[PID:{process_id}]   - 正在处理主题: '{theme_name}'...")
-
         theme_details = themes_config.get(theme_name)
         if not theme_details:
-            print(f"[PID:{process_id}]     警告：在配置中未找到主题 '{theme_name}'。跳过。")
+            print(f"[PID:{process_id}] 警告: 未找到主题 '{theme_name}'。跳过。")
             results['failed'] += 1
             continue
 
         bg_color = theme_details["background"]
         fg_color = theme_details.get("foreground")
 
-        # 1. 转换为 ASCII 和采样颜色 (调用修改后的函数)
-        ascii_conv_start = time.perf_counter()
-        ascii_char_color_data = image_to_ascii(
-            color_image=original_img,
-            width_chars=output_width_chars,
-            active_theme_name=theme_name # 参数仍然传递，但函数内部不再使用它来调整映射
-        )
-        ascii_conv_end = time.perf_counter()
-
+        ascii_char_color_data = image_to_ascii(original_img, output_width_chars, theme_name)
         if not ascii_char_color_data:
-            print(f"[PID:{process_id}]     错误：为主题 '{theme_name}' 生成 ASCII 数据或采样颜色失败。跳过 PNG 创建。")
+            print(f"[PID:{process_id}] 错误: 为主题 '{theme_name}' 生成 ASCII 数据失败。")
             results['failed'] += 1
             continue
 
-        # print(f"[PID:{process_id}]       ASCII 转换与颜色采样耗时: {ascii_conv_end - ascii_conv_start:.4f}s")
-
-        # 2. 创建 PNG (保存到 image_specific_output_dir)
         resize_suffix = "_resized" if RESIZE_OUTPUT else ""
         output_filename = f"{file_name_no_ext}_ascii_{theme_name}_{output_width_chars}w{resize_suffix}.png"
         output_filepath = os.path.join(image_specific_output_dir, output_filename)
 
-        png_create_start = time.perf_counter()
+        # 使用在子进程中加载的 font 对象
         png_success = create_ascii_png(
-            ascii_char_color_data=ascii_char_color_data,
-            theme_name=theme_name,
-            output_path=output_filepath,
-            font=font,
-            background_color=bg_color,
-            foreground_color=fg_color,
-            original_image_size=original_dimensions
+            ascii_char_color_data, theme_name, output_filepath, font,
+            bg_color, fg_color, original_dimensions
         )
-        png_create_end = time.perf_counter()
 
         if png_success:
             results['success'] += 1
-            # print(f"[PID:{process_id}]       PNG 创建耗时: {png_create_end - png_create_start:.4f}s")
-            # print(f"[PID:{process_id}]       输出已保存: {os.path.join(file_name_no_ext, output_filename)}")
         else:
             results['failed'] += 1
-            print(f"[PID:{process_id}]     错误：为主题 '{theme_name}' 创建 PNG 失败。")
+            print(f"[PID:{process_id}] 错误: 为主题 '{theme_name}' 创建 PNG 失败。")
 
-        theme_end_time = time.perf_counter()
-        # print(f"[PID:{process_id}]     主题 '{theme_name}' 处理耗时: {theme_end_time - theme_start_time:.4f}s")
-
-    print(f"[PID:{process_id}] 完成处理图像: {short_image_name} (成功: {results['success']}, 失败: {results['failed']})")
-    # 返回处理结果
+    # 不再打印每个进程的完成消息，让主进程打印
+    # print(f"[PID:{process_id}] 完成图像 {short_image_name}")
     return results
 
 # ==============================================================================
 # *** 修改后的 process_directory 函数 ***
 # ==============================================================================
-def process_directory(dir_path, font, themes_config, output_width_chars):
+# 修改签名，接收 font_info 而不是 font
+def process_directory(dir_path, font_info, themes_config, output_width_chars):
     """
     扫描目录，使用进程池并行处理所有支持的图像。
-    并将每个图像的结果保存到单独的子目录中。
+    传递 font_info 给子进程。
     """
     print(f"\n正在处理目录: {dir_path}")
     overall_results = {'processed_files': 0, 'total_success': 0, 'total_failed': 0, 'output_location': None}
-    start_dir_processing_time = time.perf_counter() # 记录目录处理开始时间
+    start_dir_processing_time = time.perf_counter()
 
     dir_name = os.path.basename(os.path.normpath(dir_path))
     parent_dir = os.path.dirname(os.path.abspath(dir_path))
-    main_output_dir = os.path.join(parent_dir, f"{dir_name}_ascii_art_{output_width_chars}")
+    # --- 修正输出目录名 ---
+    main_output_dir = os.path.join(parent_dir, f"{dir_name}_ascii_art_{output_width_chars}w") #<-- 修正: 确保 'w' 在这里
     overall_results['output_location'] = main_output_dir
 
     try:
         os.makedirs(main_output_dir, exist_ok=True)
         print(f"主输出目录: {main_output_dir}")
     except OSError as e:
-        print(f"错误：无法创建或访问主输出目录 '{main_output_dir}': {e}。中止。")
-        overall_results['total_failed'] = 1 # 标记为失败
+        print(f"错误：无法创建主输出目录 '{main_output_dir}': {e}。")
+        overall_results['total_failed'] = 1
         return overall_results
 
     print("正在扫描支持的图像文件...")
@@ -564,10 +557,6 @@ def process_directory(dir_path, font, themes_config, output_width_chars):
         for entry in os.scandir(dir_path):
             if entry.is_file() and entry.name.lower().endswith(SUPPORTED_IMAGE_EXTENSIONS):
                 found_files.append(entry.path)
-    except FileNotFoundError:
-        print(f"错误：扫描期间未找到输入目录 '{dir_path}'。")
-        overall_results['total_failed'] = 1
-        return overall_results
     except Exception as e:
         print(f"扫描目录 '{dir_path}' 时出错: {e}")
         overall_results['total_failed'] = 1
@@ -581,57 +570,45 @@ def process_directory(dir_path, font, themes_config, output_width_chars):
     print(f"找到 {num_files} 个支持的图像文件。开始并行处理...")
     overall_results['processed_files'] = num_files
 
-    # --- 使用 ProcessPoolExecutor 进行并行处理 ---
-    # 设置最大工作进程数，默认为 CPU 核心数，可以调整
-    # max_workers = min(multiprocessing.cpu_count(), 4) # 例如，限制最多4个进程
-    max_workers = None # None 表示使用 os.cpu_count()
-    futures = {} # 用于存储 Future 对象和对应的图像路径
-
-    # 使用 try...finally 确保 executor 被关闭
+    max_workers = None
+    futures = {}
     executor = concurrent.futures.ProcessPoolExecutor(max_workers=max_workers)
     try:
-        # 提交所有任务
         for image_file_path in found_files:
-            # print(f"  提交任务: {os.path.basename(image_file_path)}") # 可以在提交时打印
             future = executor.submit(
-                process_image_to_ascii_themes, # 要执行的函数
-                image_file_path,              # 函数参数
-                font,
+                process_image_to_ascii_themes, # Target function
+                image_file_path,           # Args...
+                font_info,                 # <-- 传递 font_info
                 themes_config,
                 main_output_dir,
                 output_width_chars
             )
-            futures[future] = image_file_path # 映射 Future 到文件名
+            futures[future] = image_file_path
 
-        # --- 等待任务完成并收集结果 ---
         processed_count = 0
+        print("--- 开始处理文件 (每个文件完成后会显示结果) ---")
         for future in concurrent.futures.as_completed(futures):
             image_path = futures[future]
             image_basename = os.path.basename(image_path)
             processed_count += 1
             try:
-                # 获取子进程返回的结果
                 image_results = future.result()
                 overall_results['total_success'] += image_results.get('success', 0)
                 overall_results['total_failed'] += image_results.get('failed', 0)
-                # 可以在主进程中打印每个文件完成的消息
-                print(f"  [主进程] {processed_count}/{num_files}: 处理完成 '{image_basename}' (结果: 成功={image_results.get('success', 0)}, 失败={image_results.get('failed', 0)})")
-
-            except Exception as exc:
-                # 如果子进程中发生未捕获的异常，会在这里抛出
-                print(f"  [主进程] {processed_count}/{num_files}: 处理图像 '{image_basename}' 时产生异常: {exc}")
-                # 将此图像的所有主题计为失败
-                overall_results['total_failed'] += len(THEMES_TO_GENERATE)
-                # 可以选择性地打印更详细的错误
-                # traceback.print_exc()
+                success_msg = f"成功={image_results.get('success', 0)}"
+                failed_msg = f"失败={image_results.get('failed', 0)}"
+                print(f"  [进度 {processed_count}/{num_files}] 处理完成: '{image_basename}' ({success_msg}, {failed_msg})")
+            except Exception as exc: # Catch exceptions from worker process OR during result retrieval
+                 print(f"  [进度 {processed_count}/{num_files}] 处理图像 '{image_basename}' 时主进程捕获到异常: {exc}")
+                 # traceback.print_exc() # Optionally print traceback from the main process perspective
+                 overall_results['total_failed'] += len(THEMES_TO_GENERATE) # Assume all themes failed for this image
+        print("--- 所有文件处理任务已完成 ---")
 
     finally:
-        print("所有任务已提交，正在等待完成...")
-        executor.shutdown(wait=True) # 等待所有任务完成并关闭池
-        print("进程池已关闭。")
+        executor.shutdown(wait=True)
 
     end_dir_processing_time = time.perf_counter()
-    print(f"目录 '{dir_path}' 处理耗时: {end_dir_processing_time - start_dir_processing_time:.4f} 秒")
+    print(f"目录 '{dir_path}' 处理总耗时: {end_dir_processing_time - start_dir_processing_time:.4f} 秒")
 
     return overall_results
 # ==============================================================================
@@ -706,12 +683,15 @@ def print_summary(results, duration):
     print(f"  - 总处理时间：{duration:.4f} 秒")
     print("===================================")
 
-# --- 主执行函数 (无变化) ---
+# ==============================================================================
+# *** 修改后的 main 函数 ***
+# ==============================================================================
 def main():
     """主执行函数。"""
-    print("--- ASCII 艺术生成器 (模拟 C++ 逻辑版) ---") # 更新标题
-    results = {}
+    print("--- ASCII 艺术生成器 ---")
+    results = {'input_type': 'unknown'}
     start_time = time.perf_counter()
+    font_info = None # <-- 用于存储字体加载信息
 
     try:
         script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -723,75 +703,117 @@ def main():
         font_filename = config["font_filename"]
         font_size = config["font_size"]
 
-        print("正在加载字体...")
-        font = None
-        font_path = os.path.join(script_dir, font_filename)
-        font_load_error = False
+        print("检查字体设置...")
+        preferred_font_loaded = False
+        local_font_path = os.path.join(script_dir, font_filename)
+
         try:
-            print(f"尝试从以下路径加载字体: {font_path} (大小: {font_size})")
-            if not os.path.exists(font_path):
-                print(f"警告: 本地路径未找到 '{font_path}'。尝试系统字体 '{font_filename}'...")
+            # 1. 尝试本地路径
+            print(f"尝试本地路径: {local_font_path} (大小: {font_size})")
+            if os.path.exists(local_font_path):
+                # 验证是否能加载 (但不存储对象)
+                _ = ImageFont.truetype(local_font_path, font_size)
+                print(f"成功验证本地字体 '{font_filename}'。")
+                font_info = {'type': 'truetype', 'path': local_font_path, 'size': font_size}
+                results['font_used'] = f"本地 '{font_filename}'"
+                results['font_size_used'] = font_size
+                preferred_font_loaded = True
+
+            # 2. 尝试系统路径
+            if not preferred_font_loaded:
+                print(f"警告: 本地未找到。尝试系统字体 '{font_filename}'...")
                 try:
-                    font = ImageFont.truetype(font_filename, font_size)
-                    print(f"成功加载系统字体 '{font_filename}'。")
+                    # 验证是否能加载 (但不存储对象)
+                    _ = ImageFont.truetype(font_filename, font_size)
+                    print(f"成功验证系统字体 '{font_filename}'。")
+                    # 对于系统字体，传递名称而不是完整路径，让子进程自己找
+                    font_info = {'type': 'truetype', 'path': font_filename, 'size': font_size}
+                    results['font_used'] = f"系统 '{font_filename}'"
+                    results['font_size_used'] = font_size
+                    preferred_font_loaded = True
                 except IOError:
-                    print(f"错误: 无法在本地或系统中找到/加载字体 '{font_filename}'。")
-                    raise
-            else:
-                font = ImageFont.truetype(font_path, font_size)
-                print("字体加载成功。")
+                    print(f"警告: 系统中也未找到 '{font_filename}'。将使用默认字体。")
 
         except IOError as e:
-            print(f"致命错误：无法加载字体文件 '{font_filename}'。")
-            print(f"错误详情: {e}")
-            results = {'input_type': 'font_error', 'font_name': font_filename, 'font_path_tried': font_path}
-            font_load_error = True
+             print(f"警告: 验证首选字体 '{font_filename}' 时出错: {e}。将使用默认字体。")
         except Exception as e:
-            print(f"致命错误：加载字体时发生意外错误: {e}")
-            results = {'input_type': 'font_error', 'font_name': font_filename, 'font_path_tried': font_path}
-            font_load_error = True
+             print(f"警告: 验证首选字体 '{font_filename}' 时发生意外错误: {e}。将使用默认字体。")
 
-        if font_load_error:
-            duration = time.perf_counter() - start_time
-            print_summary(results, duration)
-            sys.exit(1)
+        # 3. 如果首选字体验证失败，设置使用默认字体
+        if not preferred_font_loaded:
+            print("设置使用 Pillow 内置默认字体。")
+            font_info = {'type': 'default'} # 子进程将据此加载默认字体
+            results['font_used'] = "Pillow 内置默认字体"
+            # 尝试获取默认字体的大致高度用于显示
+            try:
+                 temp_default_font = ImageFont.load_default()
+                 bbox = temp_default_font.getbbox("M")
+                 default_font_approx_height = bbox[3] - bbox[1]
+                 results['font_size_used'] = f"~{default_font_approx_height}px (内置)"
+                 del temp_default_font # 删除临时对象
+            except Exception:
+                 results['font_size_used'] = "未知 (内置)"
+
+        # --- 字体信息准备完成 (font_info 非 None) ---
+        if font_info is None: # 理论上不会发生，但作为最后检查
+             print("致命错误：未能确定要使用的字体信息。")
+             sys.exit(1)
 
         input_path = get_input_path()
         if input_path is None:
-            print("未提供输入路径或操作已取消。退出。")
+            print("操作已取消。")
+            duration = time.perf_counter() - start_time
+            print_summary(results, duration)
             sys.exit(0)
 
-        processing_start_time = time.perf_counter() # 记录实际处理开始时间
+        processing_start_time = time.perf_counter()
 
         if os.path.isfile(input_path):
             results['input_type'] = 'file'
             file_dir = os.path.dirname(os.path.abspath(input_path))
             file_name_no_ext, _ = os.path.splitext(os.path.basename(input_path))
-            # 单文件输出目录结构保持不变
             base_output_dir = os.path.join(file_dir, f"{file_name_no_ext}_ascii_art_{output_width_chars}w")
-            # 在这里我们仍然调用原始函数，因为并行主要针对目录处理
-            img_results = process_image_to_ascii_themes(
-                input_path,
-                font,
-                COLOR_THEMES,
-                base_output_dir, # 这个目录会被 process_image... 内部创建
-                output_width_chars
-            )
-            results['total_success'] = img_results['success']
-            results['total_failed'] = img_results['failed']
-            # 设置 output_location 用于摘要
-            results['output_location'] = os.path.join(base_output_dir, file_name_no_ext)
+
+            # --- 处理单文件 (不使用多进程，直接调用并加载字体) ---
+            # print("处理单个文件...") # 可以添加提示
+            # 在单文件模式下，我们也需要在调用前加载字体
+            single_file_font = None
+            try:
+                if font_info['type'] == 'truetype':
+                    single_file_font = ImageFont.truetype(font_info['path'], font_info['size'])
+                elif font_info['type'] == 'default':
+                    single_file_font = ImageFont.load_default()
+                if single_file_font is None: raise ValueError("无法加载字体用于单文件处理")
+
+                # 创建一个临时的 font_info 副本，只包含加载好的字体对象给旧函数（如果不想改旧函数签名）
+                # 或者，更好的方式是让 process_image_to_ascii_themes 也能处理 font_info
+                # 这里我们直接调用修改过的 process_image_to_ascii_themes
+                img_results = process_image_to_ascii_themes(
+                    input_path,
+                    font_info, # <-- 传递 font_info，让它内部加载
+                    COLOR_THEMES,
+                    base_output_dir,
+                    output_width_chars
+                )
+                results['total_success'] = img_results.get('success', 0)
+                results['total_failed'] = img_results.get('failed', 0)
+                results['output_location'] = os.path.join(base_output_dir, file_name_no_ext)
+
+            except Exception as single_err:
+                 print(f"处理单文件 '{input_path}' 时出错: {single_err}")
+                 results['total_failed'] = len(THEMES_TO_GENERATE)
+
 
         elif os.path.isdir(input_path):
             results['input_type'] = 'directory'
-            # 调用修改后的、使用进程池的目录处理函数
+            # 调用多进程目录处理函数，传递 font_info
             dir_results = process_directory(
                 input_path,
-                font,
+                font_info, # <-- 传递 font_info
                 COLOR_THEMES,
                 output_width_chars
              )
-            results.update(dir_results) # 合并目录处理的结果
+            results.update(dir_results)
 
         else:
             print(f"错误：输入路径 '{input_path}' 不是有效的文件或目录。")
@@ -799,23 +821,22 @@ def main():
 
         processing_end_time = time.perf_counter()
         total_processing_duration = processing_end_time - processing_start_time
-        print_summary(results, total_processing_duration) # 传递实际处理时间
+        print_summary(results, total_processing_duration)
 
     except Exception as e:
-        print("\n--- 发生未处理的异常 ---")
+        print("\n--- 发生未处理的全局异常 ---")
         print(f"错误类型: {type(e).__name__}")
         print(f"错误信息: {e}")
-        print("详细追溯信息:")
         traceback.print_exc()
-        print("--------------------------")
         results['input_type'] = 'runtime_error'
         duration = time.perf_counter() - start_time
+        if 'font_used' not in results: results['font_used'] = '加载失败或未知'
+        if 'font_size_used' not in results: results['font_size_used'] = '未知'
         print_summary(results, duration)
         sys.exit(1)
 
-# --- 主程序入口 (确保在 __main__ 下) ---
+
 if __name__ == "__main__":
-    # 这段代码对于多进程打包应用（如使用 PyInstaller）很重要
     if getattr(sys, 'frozen', False):
         application_path = os.path.dirname(sys.executable)
         try:
